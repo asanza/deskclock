@@ -209,7 +209,7 @@ void show_jpg_from_buff(uint8_t *buff, uint32_t buff_size, Rect_t area)
         return ;
     }
 
-    ESP_LOGI(TAG, "jpeg size: %d Byte", buff_size);
+    ESP_LOGI(TAG, "jpeg size: %d Byte", (int) buff_size);
 
     memset(decoded_image, 255, EPD_WIDTH * EPD_HEIGHT);
 
@@ -224,8 +224,8 @@ void show_jpg_from_buff(uint8_t *buff, uint32_t buff_size, Rect_t area)
 
 #if LIBJPEG_MEASURE
     time_update_screen = (esp_timer_get_time() - time_update_screen) / 1000;
-    ESP_LOGI(TAG, "%d ms - screen", time_update_screen);
-    ESP_LOGI(TAG, "%d ms - total time spend", time_update_screen + time_decomp + time_render);
+    ESP_LOGI(TAG, "%d ms - screen", (int) time_update_screen);
+    ESP_LOGI(TAG, "%lu ms - total time spend", time_update_screen + time_decomp + time_render);
 #endif
 }
 
@@ -290,7 +290,7 @@ static void jpeg_render(Rect_t area)
 #if LIBJPEG_MEASURE
     // calculate how long it took to draw the image
     time_render = (esp_timer_get_time() - time_render) / 1000;
-    ESP_LOGI(TAG, "%d ms - rgb to bitmap", time_render);
+    ESP_LOGI(TAG, "%d ms - rgb to bitmap", (int) time_render);
 #endif
 }
 
@@ -404,8 +404,8 @@ static int draw_jpeg(uint8_t *jpeg_buf, Rect_t *area)
 
 #if LIBJPEG_MEASURE
     time_decomp = (esp_timer_get_time() - decode_start) / 1000;
-    ESP_LOGI(TAG, "jpeg file width: %d, height: %d", jd.width, jd.height);
-    ESP_LOGI(TAG, "%d ms - image decompression", time_decomp);
+    ESP_LOGI(TAG, "jpeg file width: %d, height: %d", (int) jd.width, jd.height);
+    ESP_LOGI(TAG, "%d ms - image decompression", (int) time_decomp);
 #endif
 
     // Render the image onto the screen at given coordinates
