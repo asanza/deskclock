@@ -400,6 +400,9 @@ void get_glyph(const GFXfont *font, uint32_t code_point, GFXglyph **glyph);
 void write_string(const GFXfont *font, const char *string, int32_t *cursor_x,
                   int32_t *cursor_y, uint8_t *framebuffer);
 
+
+void epd_repair();
+
 #ifdef __cplusplus
 }
 #endif

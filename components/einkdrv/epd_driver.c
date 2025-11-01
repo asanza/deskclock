@@ -1109,6 +1109,33 @@ static void IRAM_ATTR feed_display(OutputParams *params)
     vTaskDelay(portMAX_DELAY);
 }
 
+static void delay(uint32_t ms)
+{
+    vTaskDelay(pdMS_TO_TICKS(ms));
+}
+
+void epd_repair(void)
+{
+    int32_t i = 0;
+
+    Rect_t area = epd_full_screen();
+    epd_poweron();
+    delay(10);
+    epd_clear();
+    for (i = 0; i < 20; i++)
+    {
+        epd_push_pixels(area, 50, 0);
+        delay(500);
+    }
+    epd_clear();
+    for (i = 0; i < 40; i++)
+    {
+        epd_push_pixels(area, 50, 1);
+        delay(500);
+    }
+    epd_clear();
+}
+
 /******************************************************************************/
 /***        END OF FILE                                                     ***/
 /******************************************************************************/

@@ -1,0 +1,77 @@
+dependencies:
+  esp-idf-lib/esp_idf_lib_helpers:
+    component_hash: a8049b1e609679fb54b2d57b0399dd29c4d1fda09a797edac9926f7810aa5703
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    targets:
+    - esp32
+    - esp32c2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    - esp32h2
+    - esp32p4
+    - esp32s2
+    - esp32s3
+    version: 1.3.10
+  esp-idf-lib/i2cdev:
+    component_hash: 11c08f9e1a7d346b5dd763196dc2567cf2209ae49042402c2c2d296624601c14
+    dependencies:
+    - name: esp-idf-lib/esp_idf_lib_helpers
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    targets:
+    - esp32
+    - esp32c2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    - esp32h2
+    - esp32p4
+    - esp32s2
+    - esp32s3
+    version: 2.0.8
+  esp-idf-lib/pcf8563:
+    component_hash: 14af1ac95d9f1ba3113692b6acaa89af20a319c7b00248d648cd58b0d9d48092
+    dependencies:
+    - name: esp-idf-lib/esp_idf_lib_helpers
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: esp-idf-lib/i2cdev
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32c2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    - esp32h2
+    - esp32p4
+    - esp32s2
+    - esp32s3
+    version: 1.0.7
+  idf:
+    source:
+      type: idf
+    version: 5.1.2
+direct_dependencies:
+- esp-idf-lib/pcf8563
+- idf
+manifest_hash: f3e5014e4596f12bf0f785bbb29dcb465a58e723d08e6c7ebaad1e84c94bd4f4
+target: esp32s3
+version: 2.0.0
