@@ -382,7 +382,8 @@ void i2s_bus_init(i2s_bus_config *cfg)
             cfg->data_1,
         },
         .bus_width = 8,
-        .max_transfer_bytes = (cfg->epd_row_width + 32)/4
+        .max_transfer_bytes = (cfg->epd_row_width + 32)/4,
+        .clk_src = LCD_CLK_SRC_DEFAULT,
     };
     ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&bus_config, &i80_bus));
 

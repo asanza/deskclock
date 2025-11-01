@@ -3,12 +3,8 @@
 
 void app_main(void)
 {
-    Rect_t area = {
-        .x = 230,
-        .y = 0,
-        .width = 20,
-        .height = 20,
-    };
+    epd_init();
     epd_poweron();
-    epd_clear_area(area);
+    epd_clear();
+    while(1);
 }
