@@ -366,6 +366,13 @@ typedef struct
     int32_t          descender;      /** Maximal height of a glyph below the base line */
 } GFXfont;
 
+typedef struct
+{
+    uint32_t width;
+    uint32_t height;
+    uint8_t* data;
+} GFXimage;
+
 /**
  * @brief Get the text bounds for string, when drawn at (x, y).
  *        Set font properties to NULL to use the defaults.

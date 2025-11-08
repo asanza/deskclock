@@ -43,13 +43,9 @@ with open(args.outputfile, 'w') as f:
     # Write header with include guard
     f.write("#ifndef {}\n".format(guard_name))
     f.write("#define {}\n\n".format(guard_name))
-    f.write("#include <stdint.h>\n\n")
+    f.write("#include <epd_driver.h>\n\n")
     
-    f.write("const uint32_t {}_width = {};\n".format(args.name, im.size[0]))
-    f.write("const uint32_t {}_height = {};\n".format(args.name, im.size[1]))
-    f.write(
-        "const uint8_t {}_data[({}*{})/2] = {{\n".format(args.name, math.ceil(im.size[0] / 2) * 2, im.size[1])
-    )
+    f.write("static const uint8_t {}_data[({}*{})/2] = {{\n".format(args.name, math.ceil(im.size[0] / 2) * 2, im.size[1]))
     for y in range(0, im.size[1]):
         byte = 0
         done = True
@@ -66,4 +62,12 @@ with open(args.outputfile, 'w') as f:
             f.write("0x{:02X}, ".format(byte))
         f.write("\n\t");
     f.write("};\n\n")
+    
+    # Write the GFXimage struct
+    f.write("static const GFXimage {} = {{\n".format(args.name))
+    f.write("    .width = {},\n".format(im.size[0]))
+    f.write("    .height = {},\n".format(im.size[1]))
+    f.write("    .data = (uint8_t*){}_data\n".format(args.name))
+    f.write("};\n\n")
+    
     f.write("#endif // {}\n".format(guard_name))

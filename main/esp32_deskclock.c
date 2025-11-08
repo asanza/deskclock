@@ -78,18 +78,16 @@ get_rtc_time(char *time_str, char *date_str, struct tm *tm_out)
 }
 
 static void
-draw_battery_icon(void)
+draw_icon(const GFXimage* img, int x, int y)
 {
-    // Draw battery icon at top-left corner
-    const int32_t margin = 20;
     Rect_t icon_area = {
-        .x = margin,
-        .y = margin,
-        .width = batt_width,
-        .height = batt_height
+        .x = x,
+        .y = y,
+        .width = img->width,
+        .height = img->height
     };
     
-    epd_draw_image(icon_area, (uint8_t *)batt_data, BLACK_ON_WHITE);
+    epd_draw_image(icon_area, (uint8_t *)img->data, BLACK_ON_WHITE);
     ESP_LOGI(TAG, "Low battery icon displayed");
 }
 
@@ -129,7 +127,7 @@ draw_time_and_date(const char *time_str, const char *date_str, bool full_clear, 
         
         // Draw battery icon if battery is low
         if (show_battery_icon) {
-            draw_battery_icon();
+            draw_icon(&batt, 20, 20);
         }
         
         last_time_w = time_w;
