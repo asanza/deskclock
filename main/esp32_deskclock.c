@@ -12,9 +12,11 @@
 #include <Quicksand_140.h>
 #include <Quicksand_28.h>
 #include <pcf8563.h>
+#include <batt_icon.h>
 #include "ble_time_sync.h"
 
 #define TAG "main"
+#define BATTERY_LOW_THRESHOLD 3.4f  // Warning at 3.4V (~20% capacity)
 
 // RTC memory to persist across deep sleep
 RTC_DATA_ATTR static int32_t last_time_w = 0;
@@ -76,7 +78,23 @@ get_rtc_time(char *time_str, char *date_str, struct tm *tm_out)
 }
 
 static void
-draw_time_and_date(const char *time_str, const char *date_str, bool full_clear)
+draw_battery_icon(void)
+{
+    // Draw battery icon at top-left corner
+    const int32_t margin = 20;
+    Rect_t icon_area = {
+        .x = margin,
+        .y = margin,
+        .width = batt_width,
+        .height = batt_height
+    };
+    
+    epd_draw_image(icon_area, (uint8_t *)batt_data, BLACK_ON_WHITE);
+    ESP_LOGI(TAG, "Low battery icon displayed");
+}
+
+static void
+draw_time_and_date(const char *time_str, const char *date_str, bool full_clear, bool show_battery_icon)
 {
     FontProperties props = {.fg_color = 15, .bg_color = 0, .fallback_glyph = 0, .flags = 0};
     
@@ -108,6 +126,11 @@ draw_time_and_date(const char *time_str, const char *date_str, bool full_clear)
         x = date_x;
         y = date_y;
         writeln((GFXfont *)&Quicksand_28, date_str, &x, &y, NULL);
+        
+        // Draw battery icon if battery is low
+        if (show_battery_icon) {
+            draw_battery_icon();
+        }
         
         last_time_w = time_w;
     } else {
@@ -250,8 +273,8 @@ app_main(void)
 
     // Simple refresh logic: full refresh every 5 minutes, partial otherwise
     bool full_clear = (current_time.tm_min % 5 == 0);
-    draw_time_and_date(time_str, date_str, full_clear);
-
+    bool show_battery_icon = (batt < BATTERY_LOW_THRESHOLD);
+    draw_time_and_date(time_str, date_str, full_clear, show_battery_icon);
     epd_poweroff();
 
     // Sleep until next minute

@@ -16,16 +16,35 @@ parser = ArgumentParser()
 parser.add_argument('-i', action="store", dest="inputfile")
 parser.add_argument('-n', action="store", dest="name")
 parser.add_argument('-o', action="store", dest="outputfile")
+parser.add_argument('--invert', action="store_true", dest="invert", help="Invert image colors")
 
 args = parser.parse_args()
 
 im = Image.open(args.inputfile)
 # convert to grayscale
 im = im.convert(mode='L')
-im.thumbnail((SCREEN_WIDTH, SCREEN_HEIGHT), Image.ANTIALIAS)
+
+# Invert colors if requested
+if args.invert:
+    im = ImageOps.invert(im)
+
+# Use LANCZOS instead of deprecated ANTIALIAS
+try:
+    im.thumbnail((SCREEN_WIDTH, SCREEN_HEIGHT), Image.Resampling.LANCZOS)
+except AttributeError:
+    # Fallback for older Pillow versions
+    im.thumbnail((SCREEN_WIDTH, SCREEN_HEIGHT), Image.LANCZOS)
 
 # Write out the output file.
 with open(args.outputfile, 'w') as f:
+    # Generate include guard name from filename
+    guard_name = args.name.upper() + "_H"
+    
+    # Write header with include guard
+    f.write("#ifndef {}\n".format(guard_name))
+    f.write("#define {}\n\n".format(guard_name))
+    f.write("#include <stdint.h>\n\n")
+    
     f.write("const uint32_t {}_width = {};\n".format(args.name, im.size[0]))
     f.write("const uint32_t {}_height = {};\n".format(args.name, im.size[1]))
     f.write(
@@ -46,4 +65,5 @@ with open(args.outputfile, 'w') as f:
         if not done:
             f.write("0x{:02X}, ".format(byte))
         f.write("\n\t");
-    f.write("};\n")
+    f.write("};\n\n")
+    f.write("#endif // {}\n".format(guard_name))
