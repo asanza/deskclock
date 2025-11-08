@@ -2,6 +2,10 @@
 #include <string.h>
 #include <sys/time.h>
 #include <driver/i2c.h>
+#include <driver/gpio.h>
+#include <esp_adc/adc_oneshot.h>
+#include <esp_adc/adc_cali.h>
+#include <esp_adc/adc_cali_scheme.h>
 #include <esp_log.h>
 #include <esp_sleep.h>
 #include <epd_driver.h>
@@ -141,6 +145,58 @@ calculate_sleep_time_until_next_minute(void)
     return ((60 - seconds_in_minute) * 1000000ULL) - microseconds;
 }
 
+static float
+read_battery_voltage(void)
+{
+    // LilyGo T5 S3: Battery voltage divider is connected to GPIO14 (ADC1_CH3)
+    // Voltage divider: 100K + 100K = 2:1 ratio
+    // Battery max ~4.2V, ADC reads ~2.1V max
+    // ADC reference is 3.3V for ESP32-S3
+    
+    adc_oneshot_unit_handle_t adc1_handle;
+    adc_oneshot_unit_init_cfg_t init_config = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc1_handle));
+
+    adc_oneshot_chan_cfg_t config = {
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .atten = ADC_ATTEN_DB_12,  // Full range: 0-3.3V
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_3, &config));
+
+    // Read ADC value
+    int adc_raw;
+    ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_3, &adc_raw));
+    
+    // Initialize calibration
+    adc_cali_handle_t adc1_cali_handle = NULL;
+    adc_cali_curve_fitting_config_t cali_config = {
+        .unit_id = ADC_UNIT_1,
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    
+    esp_err_t ret = adc_cali_create_scheme_curve_fitting(&cali_config, &adc1_cali_handle);
+    
+    int voltage_mv = 0;
+    if (ret == ESP_OK) {
+        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw, &voltage_mv));
+        adc_cali_delete_scheme_curve_fitting(adc1_cali_handle);
+    }
+    
+    // Clean up
+    ESP_ERROR_CHECK(adc_oneshot_del_unit(adc1_handle));
+    
+    // Convert to battery voltage (multiply by 2 for voltage divider)
+    float battery_voltage = (voltage_mv * 2.0f) / 1000.0f;
+    
+    ESP_LOGI(TAG, "Battery: %d mV (raw: %d) -> %.2f V", voltage_mv, adc_raw, battery_voltage);
+    
+    return battery_voltage;
+}
+
 void
 app_main(void)
 {
@@ -163,6 +219,9 @@ app_main(void)
     // Initialize e-paper display
     epd_init();
 
+    float batt = read_battery_voltage();
+    ESP_LOGI(TAG, "Battery Voltage: %f", batt);
+
     // Handle BLE time sync on first boot only
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
@@ -183,8 +242,8 @@ app_main(void)
     struct tm current_time;
     get_rtc_time(time_str, date_str, &current_time);
 
-    // Simple refresh logic: full refresh every 10 minutes, partial otherwise
-    bool full_clear = (current_time.tm_min % 10 == 0);
+    // Simple refresh logic: full refresh every 5 minutes, partial otherwise
+    bool full_clear = (current_time.tm_min % 5 == 0);
     draw_time_and_date(time_str, date_str, full_clear);
 
     epd_poweroff();
