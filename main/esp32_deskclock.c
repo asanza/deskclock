@@ -216,11 +216,17 @@ app_main(void)
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
     ESP_ERROR_CHECK(pcf8563_init_desc(bus_handle, &dev_handle));
 
-    // Initialize e-paper display
-    epd_init();
-
     float batt = read_battery_voltage();
     ESP_LOGI(TAG, "Battery Voltage: %f", batt);
+
+    if(batt <= 3.2 )
+    {
+        ESP_LOGI(TAG, "Low Battery. Shutting Down.");
+        esp_deep_sleep_start();
+    }
+
+    // Initialize e-paper display
+    epd_init();
 
     // Handle BLE time sync on first boot only
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
