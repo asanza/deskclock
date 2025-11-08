@@ -13,6 +13,7 @@
 #include <Quicksand_28.h>
 #include <pcf8563.h>
 #include <batt_icon.h>
+#include <bt_icon.h>
 #include "ble_time_sync.h"
 
 #define TAG "main"
@@ -273,6 +274,7 @@ app_main(void)
     bool full_clear = (current_time.tm_min % 5 == 0);
     bool show_battery_icon = (batt < BATTERY_LOW_THRESHOLD);
     draw_time_and_date(time_str, date_str, full_clear, show_battery_icon);
+    // draw_icon(&bt_icon, 20, 20);
     epd_poweroff();
 
     // Sleep until next minute
