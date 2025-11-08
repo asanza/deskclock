@@ -217,13 +217,19 @@ draw_partial_hour_change(const char *time_str, const char *date_str,
                         int32_t time_x, int32_t time_y, int32_t time_w, int32_t time_h,
                         int32_t date_x, int32_t date_y, int32_t date_w, int32_t date_h)
 {
-    // Clear and redraw time area
-    clear_and_draw_area(time_str, (GFXfont *)&Quicksand_140,
-                       time_x, time_y, time_w, time_h, last_time_w, "time");
+    // Full clear every hour to avoid ghosting
+    ESP_LOGI(TAG, "Hour changed - doing full clear to avoid ghosting");
+    epd_clear();
 
-    // Clear and redraw date area
-    clear_and_draw_area(date_str, (GFXfont *)&Quicksand_28,
-                       date_x, date_y, date_w, date_h, last_date_w, "date");
+    // Draw time
+    int32_t x = time_x;
+    int32_t y = time_y;
+    writeln((GFXfont *)&Quicksand_140, time_str, &x, &y, NULL);
+
+    // Draw date
+    x = date_x;
+    y = date_y;
+    writeln((GFXfont *)&Quicksand_28, date_str, &x, &y, NULL);
 
     // Store current dimensions for next refresh
     last_time_w = time_w;
