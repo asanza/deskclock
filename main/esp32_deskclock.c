@@ -355,7 +355,7 @@ app_main(void)
     epd_poweroff();
 
     // Handle BLE pairing AFTER display is done
-    if (true) {
+    if (button_pressed) {
         handle_button_pairing();
     }
 
