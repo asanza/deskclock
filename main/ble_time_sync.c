@@ -2,6 +2,7 @@
 #include <string.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
+#include <nvs.h>
 #include <nimble/nimble_port.h>
 #include <nimble/nimble_port_freertos.h>
 #include <host/ble_hs.h>
@@ -88,18 +89,36 @@ static void ble_on_reset_cb(int reason);
 
 static int ble_gap_event_handler(struct ble_gap_event *event, void *arg);
 
+// Custom store status callback to debug NVS writes
+static int
+ble_store_status_cb(struct ble_store_status_event *event, void *arg)
+{
+    if (event->event_code == BLE_STORE_EVENT_OVERFLOW) {
+        ESP_LOGI(TAG, "Store overflow event: obj_type=%d", 
+                 event->overflow.obj_type);
+    } else if (event->event_code == BLE_STORE_EVENT_FULL) {
+        ESP_LOGI(TAG, "Store full event");
+    }
+    
+    // Call the default handler to actually persist to NVS
+    int rc = ble_store_util_status_rr(event, arg);
+    ESP_LOGI(TAG, "Store handler returned: rc=%d", rc);
+    
+    return rc;
+}
+
 static void
 ble_store_config_init(void)
 {
     ble_hs_cfg.reset_cb = ble_on_reset_cb;
     ble_hs_cfg.sync_cb = ble_on_sync_cb;
-    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+    ble_hs_cfg.store_status_cb = ble_store_status_cb;
     
-    // Enable bonding
+    // Enable bonding with "Just Works" pairing
     ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
     ble_hs_cfg.sm_bonding = 1;
-    ble_hs_cfg.sm_mitm = 0;
-    ble_hs_cfg.sm_sc = 1;  // Secure connections
+    ble_hs_cfg.sm_mitm = 0;  // No man-in-the-middle protection (Just Works)
+    ble_hs_cfg.sm_sc = 0;    // Disable secure connections for Just Works pairing
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
 }
@@ -107,6 +126,8 @@ ble_store_config_init(void)
 // GAP event handler for advertising/pairing
 static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
 {
+    ESP_LOGI(TAG, "GAP event: type=%d", event->type);
+    
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         ESP_LOGI(TAG, "Connection %s; status=%d",
@@ -115,7 +136,13 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         
         if (event->connect.status == 0) {
             conn_handle = event->connect.conn_handle;
+            ESP_LOGI(TAG, "Waiting for central (phone) to initiate pairing...");
+            // Let phone initiate security via createBond()
         }
+        break;
+        
+    case BLE_GAP_EVENT_LINK_ESTAB:
+        ESP_LOGI(TAG, "Link fully established");
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
@@ -139,22 +166,71 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
                     pairing_complete = true;
                     has_bonded_peer = true;
                     bonded_peer_addr = desc.peer_id_addr;
-                    ESP_LOGI(TAG, "Pairing complete!");
+                    ESP_LOGI(TAG, "Pairing complete! Forcing NVS commit...");
+                    
+                    // Give stack time to write bond data, then explicitly commit NVS
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    
+                    // Open NVS and commit to ensure bond is persisted
+                    nvs_handle_t nvs;
+                    if (nvs_open("nimble_bond", NVS_READWRITE, &nvs) == ESP_OK) {
+                        nvs_commit(nvs);
+                        nvs_close(nvs);
+                        ESP_LOGI(TAG, "NVS explicitly committed");
+                    }
                 }
             }
         }
         break;
 
     case BLE_GAP_EVENT_PASSKEY_ACTION:
-        ESP_LOGI(TAG, "Passkey action event");
-        // With NO_IO capability, this shouldn't occur
+        ESP_LOGI(TAG, "Passkey action event; action=%d", event->passkey.params.action);
+        // With NO_IO capability, respond appropriately
+        switch (event->passkey.params.action) {
+        case BLE_SM_IOACT_NUMCMP:
+            ESP_LOGI(TAG, "Numeric comparison - auto-accepting");
+            struct ble_sm_io pk = { .action = event->passkey.params.action };
+            pk.numcmp_accept = 1;
+            int rc = ble_sm_inject_io(event->passkey.conn_handle, &pk);
+            ESP_LOGI(TAG, "Inject IO result: rc=%d", rc);
+            break;
+            
+        case BLE_SM_IOACT_OOB:
+            ESP_LOGW(TAG, "OOB authentication requested - not supported");
+            break;
+            
+        case BLE_SM_IOACT_INPUT:
+        case BLE_SM_IOACT_DISP:
+        case BLE_SM_IOACT_NONE:
+            ESP_LOGI(TAG, "IO action %d - with NO_IO, should auto-pair", 
+                     event->passkey.params.action);
+            break;
+            
+        default:
+            ESP_LOGW(TAG, "Unknown passkey action: %d", event->passkey.params.action);
+            break;
+        }
         break;
+        
+    case BLE_GAP_EVENT_REPEAT_PAIRING:
+        ESP_LOGI(TAG, "Repeat pairing event - allowing retry");
+        // Allow re-pairing attempt
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
 
     case BLE_GAP_EVENT_NOTIFY_RX:
         ESP_LOGI(TAG, "Notification received");
         break;
+        
+    case BLE_GAP_EVENT_CONN_UPDATE:
+        ESP_LOGI(TAG, "Connection update; status=%d", event->conn_update.status);
+        break;
+        
+    case BLE_GAP_EVENT_MTU:
+        ESP_LOGI(TAG, "MTU update; mtu=%d", event->mtu.value);
+        break;
 
     default:
+        ESP_LOGD(TAG, "Unhandled GAP event: %d", event->type);
         break;
     }
 
@@ -184,23 +260,28 @@ static void ble_on_sync_cb(void)
     // Check if we have any bonded peers from NVS
     int num_peers;
     rc = ble_store_util_count(BLE_STORE_OBJ_TYPE_OUR_SEC, &num_peers);
+    ESP_LOGI(TAG, "Bond count check: rc=%d, num_peers=%d", rc, num_peers);
+    
     if (rc == 0 && num_peers > 0) {
         ESP_LOGI(TAG, "Found %d bonded peer(s) in NVS", num_peers);
         
         // Load the first bonded peer address
-        struct ble_store_key_sec key_sec;
-        struct ble_store_value_sec value_sec;
+        int max_peers = 1;
+        rc = ble_store_util_bonded_peers(&bonded_peer_addr, &max_peers, 1);
+        ESP_LOGI(TAG, "Load bonded peers: rc=%d, loaded=%d", rc, max_peers);
         
-        memset(&key_sec, 0, sizeof(key_sec));
-        key_sec.peer_addr = bonded_peer_addr;
-        
-        rc = ble_store_util_bonded_peers(&bonded_peer_addr, &num_peers, 1);
-        if (rc == 0 && num_peers > 0) {
+        if (rc == 0 && max_peers > 0) {
             has_bonded_peer = true;
-            ESP_LOGI(TAG, "Loaded bonded peer address from NVS");
+            ESP_LOGI(TAG, "Loaded bonded peer address from NVS: %02x:%02x:%02x:%02x:%02x:%02x",
+                     bonded_peer_addr.val[0], bonded_peer_addr.val[1], 
+                     bonded_peer_addr.val[2], bonded_peer_addr.val[3],
+                     bonded_peer_addr.val[4], bonded_peer_addr.val[5]);
+        } else {
+            ESP_LOGW(TAG, "Failed to load bonded peer address");
+            has_bonded_peer = false;
         }
     } else {
-        ESP_LOGI(TAG, "No bonded peers found in NVS");
+        ESP_LOGI(TAG, "No bonded peers found in NVS (rc=%d)", rc);
         has_bonded_peer = false;
     }
 }
@@ -208,6 +289,85 @@ static void ble_on_sync_cb(void)
 static void ble_on_reset_cb(int reason)
 {
     ESP_LOGE(TAG, "BLE reset, reason: %d", reason);
+}
+
+// GATT server - simple discovery service for pairing
+static int
+gatt_svr_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                    struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    // Simple read-only characteristic
+    ESP_LOGI(TAG, "GATT characteristic access; op=%d", ctxt->op);
+    
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        const char *info = "DeskClock";
+        int rc = os_mbuf_append(ctxt->om, info, strlen(info));
+        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+    
+    return BLE_ATT_ERR_UNLIKELY;
+}
+
+static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
+    {
+        // Discovery Service with characteristic requiring encryption
+        // This forces Android to initiate pairing automatically
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &DISCOVERY_SERVICE_UUID.u,
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                // Pairing trigger characteristic - requires encryption
+                .uuid = BLE_UUID16_DECLARE(0x2A00), // Device Name
+                .access_cb = gatt_svr_chr_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC, // Require encryption
+            },
+            {
+                0, // No more characteristics
+            }
+        },
+    },
+    {
+        0, // No more services
+    },
+};
+
+static void
+gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
+{
+    char buf[BLE_UUID_STR_LEN];
+    
+    switch (ctxt->op) {
+    case BLE_GATT_REGISTER_OP_SVC:
+        ESP_LOGI(TAG, "Registered service %s with handle=%d",
+                 ble_uuid_to_str(ctxt->svc.svc_def->uuid, buf),
+                 ctxt->svc.handle);
+        break;
+        
+    case BLE_GATT_REGISTER_OP_CHR:
+        ESP_LOGI(TAG, "Registered characteristic %s with handle=%d",
+                 ble_uuid_to_str(ctxt->chr.chr_def->uuid, buf),
+                 ctxt->chr.def_handle);
+        break;
+        
+    default:
+        break;
+    }
+}
+
+static int
+gatt_svr_init(void)
+{
+    int rc = ble_gatts_count_cfg(gatt_svr_svcs);
+    if (rc != 0) {
+        return rc;
+    }
+
+    rc = ble_gatts_add_svcs(gatt_svr_svcs);
+    if (rc != 0) {
+        return rc;
+    }
+
+    return 0;
 }
 
 // Public API implementation
@@ -236,6 +396,14 @@ bool ble_init(void)
     ret = nimble_port_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to init NimBLE: %s", esp_err_to_name(ret));
+        return false;
+    }
+    
+    // Initialize GATT server with Discovery Service
+    ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;
+    ret = gatt_svr_init();
+    if (ret != 0) {
+        ESP_LOGE(TAG, "Failed to init GATT server; rc=%d", ret);
         return false;
     }
     
@@ -345,7 +513,24 @@ bool ble_start_pairing_advertising(const char *device_name, uint32_t timeout_ms)
     }
     
     if (pairing_complete) {
-        ESP_LOGI(TAG, "Pairing successful!");
+        ESP_LOGI(TAG, "Pairing successful! Waiting for bond to be stored...");
+        
+        // Keep connection alive for a bit to ensure bond is written to NVS
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        
+        // Disconnect gracefully
+        if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+            ESP_LOGI(TAG, "Disconnecting...");
+            ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            
+            // Wait for disconnect to complete
+            int wait_disconnect = 20; // 2 seconds
+            while (conn_handle != BLE_HS_CONN_HANDLE_NONE && wait_disconnect > 0) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                wait_disconnect--;
+            }
+        }
+        
         return true;
     } else {
         ESP_LOGW(TAG, "Pairing timeout or failed");
@@ -406,16 +591,19 @@ static bool read_characteristic(uint16_t conn_handle, const ble_uuid_t *svc_uuid
     // For simplicity, we'll use a blocking approach with characteristic discovery
     // In production, you'd want to implement proper async discovery
     
-    // Try to read the characteristic
-    gatt_read_ctx_t ctx = {
-        .buffer = buffer,
-        .buffer_size = buffer_size,
-        .completed = false
-    };
+    // TODO: Implement proper characteristic discovery and read
+    // gatt_read_ctx_t ctx = {
+    //     .buffer = buffer,
+    //     .buffer_size = buffer_size,
+    //     .completed = false
+    // };
     
     // This is simplified - proper implementation would discover characteristic handle first
     // For now, we'll log that this needs to be properly implemented
     ESP_LOGW(TAG, "Characteristic read not fully implemented - needs proper discovery");
+    
+    (void)buffer;       // Suppress unused parameter warnings
+    (void)buffer_size;
     
     return false;
 }
