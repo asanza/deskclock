@@ -137,7 +137,7 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
     if (full_clear) {
         // Full screen refresh
         ESP_LOGI(TAG, "Full screen refresh");
-        epd_clear();
+        epd_clear_area_cycles(epd_full_screen(), 2, 10);
 
         // Draw all elements
         display_draw_time(time_str, time_x, time_y);
@@ -170,8 +170,7 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         };
 
         ESP_LOGI(TAG, "Partial refresh - time only");
-        epd_clear_area_cycles(area, 1, 20);
-        // epd_clear_area(area);
+        epd_clear_area_cycles(area, 1, 10);
 
         display_draw_time(time_str, time_x, time_y);
 
