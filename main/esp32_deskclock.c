@@ -17,7 +17,7 @@
 // RTC memory to persist across deep sleep
 RTC_DATA_ATTR int32_t last_time_w = 0;
 
-static void
+static uint32_t
 wait_for_button_release(void)
 {
     gpio_config_t io_conf = {
@@ -29,13 +29,18 @@ wait_for_button_release(void)
     };
     gpio_config(&io_conf);
     
+    // Measure how long the button is held
+    uint32_t press_duration_ms = 0;
     while (gpio_get_level(BUTTON_1) == 0) {
         vTaskDelay(pdMS_TO_TICKS(10));
+        press_duration_ms += 10;
     }
     
     // Debounce delay and cleanup
     vTaskDelay(pdMS_TO_TICKS(200));
     rtc_gpio_deinit(BUTTON_1);
+    
+    return press_duration_ms;
 }
 
 static void
@@ -141,7 +146,9 @@ app_main(void)
     ESP_LOGI(TAG, "Wakeup reason: %d", wakeup_reason);
     
     bool button_pressed = false;
+    bool button_long_pressed = false;
     bool reset_button_pressed = false;
+    uint32_t press_duration_ms = 0;
 
     if (reset_reason == ESP_RST_EXT || reset_reason == ESP_RST_POWERON ) {
         ESP_LOGI(TAG, "Reset button pressed");
@@ -150,6 +157,16 @@ app_main(void)
         if (esp_sleep_get_ext1_wakeup_status() & (1ULL << BUTTON_1)) {
             ESP_LOGI(TAG, "Woke up from button 1 press");
             button_pressed = true;
+            
+            // Measure button press duration
+            press_duration_ms = wait_for_button_release();
+            ESP_LOGI(TAG, "Button held for %lu ms", press_duration_ms);
+            
+            // Long press threshold: 2 seconds
+            if (press_duration_ms >= 2000) {
+                button_long_pressed = true;
+                ESP_LOGI(TAG, "Long press detected");
+            }
         }
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
         ESP_LOGI(TAG, "Power-on reset");
