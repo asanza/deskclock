@@ -196,15 +196,17 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
 
         ESP_LOGI(TAG, "Partial refresh - time only");
         
-        // Clear time area in framebuffer
+        // Clear only the time area in framebuffer (rest stays from previous full draw)
         epd_fill_rect(area.x, area.y, area.width, area.height, 0xFF, framebuffer);
         
-        // Draw new time to framebuffer
+        // Draw new time to framebuffer at absolute position
+        // writeln expects full EPD_WIDTH stride, which framebuffer has
         display_draw_time(time_str, time_x, time_y);
         
-        // Clear display area and write framebuffer
+        // Clear the display area and write full framebuffer
+        // The EPD controller will only update the area we cleared
         epd_clear_area_cycles(area, 1, 10);
-        epd_draw_grayscale_image(area, framebuffer);
+        epd_draw_grayscale_image(epd_full_screen(), framebuffer);
 
         last_time_w = time_w;
     }
