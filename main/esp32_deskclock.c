@@ -9,6 +9,7 @@
 #include <esp_adc/adc_cali_scheme.h>
 #include <esp_log.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
 #include <epd_driver.h>
 #include <Quicksand_140.h>
 #include <Quicksand_28.h>
@@ -236,50 +237,65 @@ read_battery_voltage(void)
 }
 
 static void
-handle_wakeup_reason(i2c_master_dev_handle_t  dev_handle,
-                     esp_sleep_wakeup_cause_t wakeup_reason)
+wait_for_button_release(void)
 {
-    struct tm received_time;
-    bool      sync_time = false;
-    if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
-        // First boot - attempt BLE time sync
-        ESP_LOGI(TAG, "First boot - attempting BLE time sync");
+    gpio_config_t io_conf = {
+        .pin_bit_mask  = (1ULL << BUTTON_1),
+        .mode          = GPIO_MODE_INPUT,
+        .pull_up_en    = GPIO_PULLUP_ENABLE,
+        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+        .intr_type     = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io_conf);
+    
+    while (gpio_get_level(BUTTON_1) == 0) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    
+    // Debounce delay and cleanup
+    vTaskDelay(pdMS_TO_TICKS(200));
+    rtc_gpio_deinit(BUTTON_1);
+}
+
+static void
+handle_wakeup_reason(i2c_master_dev_handle_t dev_handle, 
+                     esp_sleep_wakeup_cause_t wakeup_reason,
+                     esp_reset_reason_t reset_reason)
+{
+    bool sync_time = false;
+    
+    // Check reset reason first
+    if (reset_reason == ESP_RST_EXT) {
+        ESP_LOGI(TAG, "Reset button pressed - attempting BLE time sync");
         sync_time = true;
-    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
-        // Button press detected
-        uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
-        if (wakeup_pin_mask & (1ULL << BUTTON_1)) {
-            sync_time = true;
-            ESP_LOGI(TAG, "Woke up from BUTTON_1 press");
-            
-            // Configure button GPIO as input with pullup to read state
-            gpio_config_t io_conf = {
-                .pin_bit_mask = (1ULL << BUTTON_1),
-                .mode = GPIO_MODE_INPUT,
-                .pull_up_en = GPIO_PULLUP_ENABLE,
-                .pull_down_en = GPIO_PULLDOWN_DISABLE,
-                .intr_type = GPIO_INTR_DISABLE
-            };
-            gpio_config(&io_conf);
-            
-            // Wait for button release (goes HIGH when released)
-            ESP_LOGI(TAG, "Waiting for button release...");
-            while (gpio_get_level(BUTTON_1) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-            ESP_LOGI(TAG, "Button released");
-            
-            // Add extra delay to ensure button is fully released and debounced
-            vTaskDelay(pdMS_TO_TICKS(200));
-            
-            // Disable the GPIO to prevent spurious wakeups
-            rtc_gpio_deinit(BUTTON_1);
+    }
+    // Then check wakeup reason
+    else {
+        switch (wakeup_reason) {
+            case ESP_SLEEP_WAKEUP_UNDEFINED:
+                ESP_LOGI(TAG, "Power-on reset - attempting BLE time sync");
+                sync_time = true;
+                break;
+                
+            case ESP_SLEEP_WAKEUP_EXT1:
+                if (esp_sleep_get_ext1_wakeup_status() & (1ULL << BUTTON_1)) {
+                    ESP_LOGI(TAG, "Woke up from button press");
+                    wait_for_button_release();
+                    sync_time = true;
+                }
+                break;
+                
+            case ESP_SLEEP_WAKEUP_TIMER:
+                ESP_LOGI(TAG, "Woke up from timer");
+                break;
+                
+            default:
+                break;
         }
-    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
-        ESP_LOGI(TAG, "Woke up from timer");
     }
 
     if (sync_time) {
+        struct tm received_time;
         if (ble_sync_time(&received_time)) {
             ESP_LOGI(TAG, "BLE time sync successful");
             set_rtc_time(dev_handle, &received_time);
@@ -290,11 +306,11 @@ handle_wakeup_reason(i2c_master_dev_handle_t  dev_handle,
 void
 app_main(void)
 {
-    // Initialize I2C and PCF8563
+    // Initialize I2C bus and PCF8563 RTC
     i2c_master_bus_handle_t bus_handle;
     i2c_master_dev_handle_t dev_handle;
 
-    const i2c_master_bus_config_t i2c_mst_config = {
+    const i2c_master_bus_config_t i2c_config = {
         .clk_source                   = I2C_CLK_SRC_DEFAULT,
         .i2c_port                     = I2C_NUM_0,
         .scl_io_num                   = BOARD_SCL,
@@ -303,59 +319,54 @@ app_main(void)
         .flags.enable_internal_pullup = true,
     };
 
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_config, &bus_handle));
     ESP_ERROR_CHECK(pcf8563_init_desc(bus_handle, &dev_handle));
 
-    float batt = read_battery_voltage();
-    ESP_LOGI(TAG, "Battery Voltage: %f", batt);
+    // Check battery level - shutdown if critically low
+    float battery_voltage = read_battery_voltage();
+    ESP_LOGI(TAG, "Battery voltage: %.2fV", battery_voltage);
 
-    if (batt <= 3.2) {
-        ESP_LOGI(TAG, "Low Battery. Shutting Down.");
+    if (battery_voltage <= 3.2f) {
+        ESP_LOGW(TAG, "Battery critically low - shutting down");
         esp_deep_sleep_start();
     }
 
     // Initialize e-paper display
     epd_init();
 
-    // Handle wakeup reasons
+    // Handle wakeup/reset and sync time if needed
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    handle_wakeup_reason(dev_handle, wakeup_reason, reset_reason);
 
-    handle_wakeup_reason(dev_handle, wakeup_reason);
-
-    // Update internal RTC from PCF8563
+    // Sync internal RTC from external RTC chip
     update_internal_rtc_from_pcf8563(dev_handle);
 
-    // Get current time
+    // Get current time and format for display
     char      time_str[16];
     char      date_str[64];
     struct tm current_time;
     get_rtc_time(time_str, date_str, &current_time);
 
-    // Refresh logic: full refresh every 5 minutes, on button press, or partial
-    // otherwise
+    // Update display (full refresh every 5 minutes, partial otherwise)
     bool full_clear        = (current_time.tm_min % 5 == 0);
-    bool show_battery_icon = (batt < BATTERY_LOW_THRESHOLD);
+    bool show_battery_icon = (battery_voltage < BATTERY_LOW_THRESHOLD);
     draw_time_and_date(time_str, date_str, full_clear, show_battery_icon);
-    // draw_icon(&bt_icon, 20, 20);
     epd_poweroff();
 
-    // Configure button for EXT1 wakeup with internal pullup
-    // This ensures the button reads HIGH when not pressed
+    // Configure button wakeup (GPIO must be RTC-capable with pullup)
     rtc_gpio_init(BUTTON_1);
     rtc_gpio_set_direction(BUTTON_1, RTC_GPIO_MODE_INPUT_ONLY);
     rtc_gpio_pullup_en(BUTTON_1);
     rtc_gpio_pulldown_dis(BUTTON_1);
     rtc_gpio_hold_dis(BUTTON_1);
-    
-    // Wake up when button is pressed (LOW level)
     esp_sleep_enable_ext1_wakeup(1ULL << BUTTON_1, ESP_EXT1_WAKEUP_ANY_LOW);
-    ESP_LOGI(TAG, "Button wake-up enabled on GPIO %d", BUTTON_1);
 
-    // Sleep until next minute
+    // Configure timer wakeup
     uint64_t sleep_time_us = calculate_sleep_time_until_next_minute();
-    ESP_LOGI(TAG, "Sleeping for %llu microseconds", sleep_time_us);
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
     esp_sleep_enable_timer_wakeup(sleep_time_us);
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
+    ESP_LOGI(TAG, "Entering deep sleep for %llu us", sleep_time_us);
     esp_deep_sleep_start();
 }
