@@ -114,11 +114,6 @@ app_main(void)
     // Initialize clock and RTC
     i2c_master_bus_handle_t bus_handle;
     i2c_master_dev_handle_t dev_handle;
-    
-    if (!clock_init(&bus_handle, &dev_handle)) {
-        ESP_LOGE(TAG, "Failed to initialize clock");
-        esp_deep_sleep_start();
-    }
 
     // Check battery level
     float battery_voltage = battery_read_voltage();
@@ -132,6 +127,12 @@ app_main(void)
     // Initialize display
     display_init();
 
+    if (!clock_init(&bus_handle, &dev_handle)) {
+        ESP_LOGE(TAG, "Failed to initialize clock");
+        display_draw_error("RTC Error");
+        esp_deep_sleep_start();
+    }
+
     // Determine wakeup reason
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     esp_reset_reason_t reset_reason = esp_reset_reason();
@@ -143,7 +144,6 @@ app_main(void)
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
         if (esp_sleep_get_ext1_wakeup_status() & (1ULL << BUTTON_1)) {
             ESP_LOGI(TAG, "Woke up from button 1 press");
-            wait_for_button_release();
             button_pressed = true;
         }
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
@@ -166,13 +166,6 @@ app_main(void)
     bool show_battery_icon = battery_is_low(battery_voltage);
     display_draw_time_and_date(time_str, date_str, NULL, full_clear, show_battery_icon);
     display_poweroff();
-
-    // Handle BLE operations after display is done
-    if (button_pressed) {
-        handle_button_pairing();
-    } else {
-        handle_bonded_device_sync();
-    }
 
     // Configure and enter deep sleep
     configure_deep_sleep();

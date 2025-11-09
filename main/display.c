@@ -177,3 +177,21 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         last_time_w = time_w;
     }
 }
+
+void display_draw_error(const char *str)
+{
+    // Clear the entire screen
+    ESP_LOGI(TAG, "Drawing error message: %s", str);
+    epd_clear();
+
+    // Get text dimensions
+    int32_t width, height;
+    display_get_date_bounds(str, &width, &height);
+
+    // Calculate centered position
+    int32_t x = (EPD_WIDTH - width) / 2;
+    int32_t y = (EPD_HEIGHT / 2) + (height / 2);
+
+    // Draw the error text using date font (Quicksand_28)
+    display_draw_date(str, x, y);
+}

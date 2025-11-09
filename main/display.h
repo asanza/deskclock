@@ -93,4 +93,13 @@ void display_get_timezone_bounds(const char *timezone_str, int32_t *width, int32
  */
 void display_draw_icon(const void *img_ptr, int x, int y);
 
+/**
+ * @brief Display an error message centered on the screen
+ * 
+ * Clears the entire screen and displays the error message in the center.
+ * 
+ * @param str Error message to display
+ */
+void display_draw_error(const char *str);
+
 #endif // DISPLAY_H
