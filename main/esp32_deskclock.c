@@ -134,13 +134,18 @@ app_main(void)
     }
 
     // Determine wakeup reason
-    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     esp_reset_reason_t reset_reason = esp_reset_reason();
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+
+    ESP_LOGI(TAG, "Reset reason: %d", reset_reason);
+    ESP_LOGI(TAG, "Wakeup reason: %d", wakeup_reason);
     
     bool button_pressed = false;
-    if (reset_reason == ESP_RST_EXT) {
+    bool reset_button_pressed = false;
+
+    if (reset_reason == ESP_RST_EXT || reset_reason == ESP_RST_POWERON ) {
         ESP_LOGI(TAG, "Reset button pressed");
-        button_pressed = true;
+        reset_button_pressed = true;
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
         if (esp_sleep_get_ext1_wakeup_status() & (1ULL << BUTTON_1)) {
             ESP_LOGI(TAG, "Woke up from button 1 press");
@@ -162,7 +167,7 @@ app_main(void)
     clock_get_time_strings(time_str, date_str, &current_time);
 
     // Update display
-    bool full_clear = (current_time.tm_min % 30 == 0);
+    bool full_clear = (current_time.tm_min % 30 == 0) || reset_button_pressed;
     bool show_battery_icon = battery_is_low(battery_voltage);
     display_draw_time_and_date(time_str, date_str, NULL, full_clear, show_battery_icon);
     display_poweroff();
