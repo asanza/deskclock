@@ -5,11 +5,17 @@
 #include <Quicksand_18.h>
 #include <batt_icon.h>
 #include <esp_log.h>
+#include <stdlib.h>
+#include <string.h>
+#include <esp_heap_caps.h>
 
 #define TAG "display"
 
 // RTC memory to persist last time width across deep sleep
 extern int32_t last_time_w;
+
+// Global framebuffer
+static uint8_t *framebuffer = NULL;
 
 // Font properties for all text rendering
 static const FontProperties font_props = {
@@ -23,7 +29,20 @@ void
 display_init(void)
 {
     epd_init();
-    ESP_LOGI(TAG, "Display initialized");
+    
+    // Allocate framebuffer: EPD_WIDTH / 2 * EPD_HEIGHT bytes
+    // Each pixel is 4 bits (half byte)
+    size_t fb_size = EPD_WIDTH / 2 * EPD_HEIGHT;
+    framebuffer = heap_caps_malloc(fb_size, MALLOC_CAP_SPIRAM);
+    if (framebuffer == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate framebuffer (%d bytes)", fb_size);
+        return;
+    }
+    
+    // Clear framebuffer
+    memset(framebuffer, 0xFF, fb_size);
+    
+    ESP_LOGI(TAG, "Display initialized with framebuffer (%d bytes)", fb_size);
 }
 
 void
@@ -78,7 +97,7 @@ int32_t
 display_draw_time(const char *time_str, int32_t x, int32_t y)
 {
     int32_t original_x = x;
-    writeln((GFXfont *)&Quicksand_140, time_str, &x, &y, NULL);
+    writeln((GFXfont *)&Quicksand_140, time_str, &x, &y, framebuffer);
     return x - original_x;
 }
 
@@ -86,7 +105,7 @@ int32_t
 display_draw_date(const char *date_str, int32_t x, int32_t y)
 {
     int32_t original_x = x;
-    writeln((GFXfont *)&Quicksand_28, date_str, &x, &y, NULL);
+    writeln((GFXfont *)&Quicksand_28, date_str, &x, &y, framebuffer);
     return x - original_x;
 }
 
@@ -94,7 +113,7 @@ int32_t
 display_draw_timezone(const char *timezone_str, int32_t x, int32_t y)
 {
     int32_t original_x = x;
-    writeln((GFXfont *)&Quicksand_18, timezone_str, &x, &y, NULL);
+    writeln((GFXfont *)&Quicksand_18, timezone_str, &x, &y, framebuffer);
     return x - original_x;
 }
 
@@ -137,9 +156,11 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
     if (full_clear) {
         // Full screen refresh
         ESP_LOGI(TAG, "Full screen refresh");
-        epd_clear_area_cycles(epd_full_screen(), 2, 10);
-
-        // Draw all elements
+        
+        // Clear framebuffer
+        memset(framebuffer, 0xFF, EPD_WIDTH / 2 * EPD_HEIGHT);
+        
+        // Draw all elements to framebuffer
         display_draw_time(time_str, time_x, time_y);
         display_draw_date(date_str, date_x, date_y);
 
@@ -151,6 +172,10 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         if (show_battery_icon) {
             display_draw_icon(&batt, 20, 20);
         }
+
+        // Clear display and write framebuffer
+        epd_clear_area_cycles(epd_full_screen(), 2, 10);
+        epd_draw_grayscale_image(epd_full_screen(), framebuffer);
 
         last_time_w = time_w;
     } else {
@@ -170,9 +195,16 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         };
 
         ESP_LOGI(TAG, "Partial refresh - time only");
-        epd_clear_area_cycles(area, 1, 10);
-
+        
+        // Clear time area in framebuffer
+        epd_fill_rect(area.x, area.y, area.width, area.height, 0xFF, framebuffer);
+        
+        // Draw new time to framebuffer
         display_draw_time(time_str, time_x, time_y);
+        
+        // Clear display area and write framebuffer
+        epd_clear_area_cycles(area, 1, 10);
+        epd_draw_grayscale_image(area, framebuffer);
 
         last_time_w = time_w;
     }
@@ -180,9 +212,10 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
 
 void display_draw_error(const char *str)
 {
-    // Clear the entire screen
     ESP_LOGI(TAG, "Drawing error message: %s", str);
-    epd_clear();
+    
+    // Clear framebuffer
+    memset(framebuffer, 0xFF, EPD_WIDTH / 2 * EPD_HEIGHT);
 
     // Get text dimensions
     int32_t width, height;
@@ -192,6 +225,10 @@ void display_draw_error(const char *str)
     int32_t x = (EPD_WIDTH - width) / 2;
     int32_t y = (EPD_HEIGHT / 2) + (height / 2);
 
-    // Draw the error text using date font (Quicksand_28)
+    // Draw the error text to framebuffer using date font (Quicksand_28)
     display_draw_date(str, x, y);
+    
+    // Clear display and write framebuffer
+    epd_clear();
+    epd_draw_grayscale_image(epd_full_screen(), framebuffer);
 }
