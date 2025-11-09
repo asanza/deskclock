@@ -3,6 +3,7 @@
 #include <sys/time.h>
 #include <driver/i2c.h>
 #include <driver/gpio.h>
+#include <driver/rtc_io.h>
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
@@ -250,6 +251,29 @@ handle_wakeup_reason(i2c_master_dev_handle_t  dev_handle,
         if (wakeup_pin_mask & (1ULL << BUTTON_1)) {
             sync_time = true;
             ESP_LOGI(TAG, "Woke up from BUTTON_1 press");
+            
+            // Configure button GPIO as input with pullup to read state
+            gpio_config_t io_conf = {
+                .pin_bit_mask = (1ULL << BUTTON_1),
+                .mode = GPIO_MODE_INPUT,
+                .pull_up_en = GPIO_PULLUP_ENABLE,
+                .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                .intr_type = GPIO_INTR_DISABLE
+            };
+            gpio_config(&io_conf);
+            
+            // Wait for button release (goes HIGH when released)
+            ESP_LOGI(TAG, "Waiting for button release...");
+            while (gpio_get_level(BUTTON_1) == 0) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+            ESP_LOGI(TAG, "Button released");
+            
+            // Add extra delay to ensure button is fully released and debounced
+            vTaskDelay(pdMS_TO_TICKS(200));
+            
+            // Disable the GPIO to prevent spurious wakeups
+            rtc_gpio_deinit(BUTTON_1);
         }
     } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
         ESP_LOGI(TAG, "Woke up from timer");
@@ -315,6 +339,14 @@ app_main(void)
     // draw_icon(&bt_icon, 20, 20);
     epd_poweroff();
 
+    // Configure button for EXT1 wakeup with internal pullup
+    // This ensures the button reads HIGH when not pressed
+    rtc_gpio_init(BUTTON_1);
+    rtc_gpio_set_direction(BUTTON_1, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en(BUTTON_1);
+    rtc_gpio_pulldown_dis(BUTTON_1);
+    rtc_gpio_hold_dis(BUTTON_1);
+    
     // Wake up when button is pressed (LOW level)
     esp_sleep_enable_ext1_wakeup(1ULL << BUTTON_1, ESP_EXT1_WAKEUP_ANY_LOW);
     ESP_LOGI(TAG, "Button wake-up enabled on GPIO %d", BUTTON_1);
