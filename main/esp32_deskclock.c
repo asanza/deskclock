@@ -164,7 +164,7 @@ app_main(void)
     // Update display
     bool full_clear = (current_time.tm_min % 5 == 0);
     bool show_battery_icon = battery_is_low(battery_voltage);
-    display_draw_time_and_date(time_str, date_str, full_clear, show_battery_icon);
+    display_draw_time_and_date(time_str, date_str, NULL, full_clear, show_battery_icon);
     display_poweroff();
 
     // Handle BLE operations after display is done
