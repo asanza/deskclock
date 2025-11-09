@@ -31,7 +31,7 @@ wait_for_button_release(void)
     
     // Measure how long the button is held
     uint32_t press_duration_ms = 0;
-    while (gpio_get_level(BUTTON_1) == 0) {
+    while (gpio_get_level(BUTTON_1) == 0 && press_duration_ms <= 3000) {
         vTaskDelay(pdMS_TO_TICKS(10));
         press_duration_ms += 10;
     }
