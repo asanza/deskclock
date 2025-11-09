@@ -134,13 +134,18 @@ draw_time_and_date(const char *time_str, const char *date_str, bool full_clear, 
         last_time_w = time_w;
     } else {
         // Partial refresh - only update time area
-        int32_t max_w = (last_time_w > time_w) ? last_time_w : time_w;
-        int32_t clear_x = (EPD_WIDTH - max_w) / 2;
+        // Calculate clear area based on previous text position to ensure full cleanup
+        int32_t last_time_x = (EPD_WIDTH - last_time_w) / 2;
+        int32_t min_x = (last_time_x < time_x) ? last_time_x : time_x;
+        int32_t max_x = (last_time_x + last_time_w > time_x + time_w) 
+                        ? (last_time_x + last_time_w) 
+                        : (time_x + time_w);
+        int32_t clear_width = max_x - min_x;
 
         Rect_t area = {
-            .x = clear_x - 20,
+            .x = min_x - 20,
             .y = time_y - time_h - 20,
-            .width = max_w + 40,
+            .width = clear_width + 40,
             .height = time_h + 40
         };
 
