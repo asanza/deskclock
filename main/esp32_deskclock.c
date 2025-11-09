@@ -258,49 +258,34 @@ wait_for_button_release(void)
 }
 
 static void
-handle_wakeup_reason(i2c_master_dev_handle_t dev_handle, 
-                     esp_sleep_wakeup_cause_t wakeup_reason,
-                     esp_reset_reason_t reset_reason)
+handle_button_pairing(void)
 {
-    bool sync_time = false;
+    ESP_LOGI(TAG, "Button 1 pressed - starting BLE pairing mode");
     
-    // Check reset reason first
-    if (reset_reason == ESP_RST_EXT) {
-        ESP_LOGI(TAG, "Reset button pressed - attempting BLE time sync");
-        sync_time = true;
+    // Initialize BLE
+    if (!ble_init()) {
+        ESP_LOGE(TAG, "Failed to initialize BLE");
+        return;
     }
-    // Then check wakeup reason
-    else {
-        switch (wakeup_reason) {
-            case ESP_SLEEP_WAKEUP_UNDEFINED:
-                ESP_LOGI(TAG, "Power-on reset - attempting BLE time sync");
-                sync_time = true;
-                break;
-                
-            case ESP_SLEEP_WAKEUP_EXT1:
-                if (esp_sleep_get_ext1_wakeup_status() & (1ULL << BUTTON_1)) {
-                    ESP_LOGI(TAG, "Woke up from button press");
-                    wait_for_button_release();
-                    sync_time = true;
-                }
-                break;
-                
-            case ESP_SLEEP_WAKEUP_TIMER:
-                ESP_LOGI(TAG, "Woke up from timer");
-                break;
-                
-            default:
-                break;
+    
+    // Start pairing advertising with 60 second timeout
+    if (ble_start_pairing_advertising("DeskClock", 60000)) {
+        ESP_LOGI(TAG, "Successfully paired with phone!");
+        
+        // Optionally read data immediately after pairing
+        ble_clock_data_t data;
+        if (ble_connect_and_read_data(&data)) {
+            ESP_LOGI(TAG, "Data received from phone");
+            ESP_LOGI(TAG, "  Time: %s", data.current_time);
+            ESP_LOGI(TAG, "  Date: %s", data.current_date);
+            ESP_LOGI(TAG, "  Weather: %s", data.weather);
         }
+    } else {
+        ESP_LOGW(TAG, "Pairing failed or timed out");
     }
-
-    if (sync_time) {
-        struct tm received_time;
-        if (ble_sync_time(&received_time)) {
-            ESP_LOGI(TAG, "BLE time sync successful");
-            set_rtc_time(dev_handle, &received_time);
-        }
-    }
+    
+    // Cleanup
+    ble_deinit();
 }
 
 void
@@ -334,10 +319,25 @@ app_main(void)
     // Initialize e-paper display
     epd_init();
 
-    // Handle wakeup/reset and sync time if needed
+    // Check if button was pressed for pairing
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     esp_reset_reason_t reset_reason = esp_reset_reason();
-    handle_wakeup_reason(dev_handle, wakeup_reason, reset_reason);
+    
+    bool button_pressed = false;
+    if (reset_reason == ESP_RST_EXT) {
+        ESP_LOGI(TAG, "Reset button pressed");
+        button_pressed = true;
+    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+        if (esp_sleep_get_ext1_wakeup_status() & (1ULL << BUTTON_1)) {
+            ESP_LOGI(TAG, "Woke up from button 1 press");
+            wait_for_button_release();
+            button_pressed = true;
+        }
+    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
+        ESP_LOGI(TAG, "Power-on reset");
+    } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
+        ESP_LOGI(TAG, "Woke up from timer");
+    }
 
     // Sync internal RTC from external RTC chip
     update_internal_rtc_from_pcf8563(dev_handle);
@@ -353,6 +353,11 @@ app_main(void)
     bool show_battery_icon = (battery_voltage < BATTERY_LOW_THRESHOLD);
     draw_time_and_date(time_str, date_str, full_clear, show_battery_icon);
     epd_poweroff();
+
+    // Handle BLE pairing AFTER display is done
+    if (true) {
+        handle_button_pairing();
+    }
 
     // Configure button wakeup (GPIO must be RTC-capable with pullup)
     rtc_gpio_init(BUTTON_1);

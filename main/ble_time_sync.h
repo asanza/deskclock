@@ -3,17 +3,73 @@
 
 #include <time.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /**
- * @brief Synchronize time using BLE Current Time Service (NimBLE)
- * 
- * Scans for nearby BLE devices advertising the Current Time Service (0x1805),
- * connects to the first available device, reads the Current Time characteristic
- * (0x2A2B), and returns the time in the provided tm structure.
- * 
- * @param time_out Pointer to tm structure to store the retrieved time
- * @return true if time was successfully retrieved, false otherwise
+ * @brief Clock data received from phone's GATT server
  */
-bool ble_sync_time(struct tm *time_out);
+typedef struct {
+    char current_time[64];    // UTF-8 string: Current time
+    char current_date[64];    // UTF-8 string: Current date
+    char weather[256];        // UTF-8 string: Weather information
+    char events[512];         // UTF-8 string: Calendar events
+    char news[512];           // UTF-8 string: News headlines
+    char custom_text[256];    // UTF-8 string: Custom text
+    bool valid;               // True if data was successfully retrieved
+} ble_clock_data_t;
+
+/**
+ * @brief Initialize BLE stack
+ * 
+ * Must be called before any other BLE functions.
+ * 
+ * @return true if initialization was successful, false otherwise
+ */
+bool ble_init(void);
+
+/**
+ * @brief Start advertising for pairing with discovery service
+ * 
+ * Advertises the device with the discovery service UUID (0000FE55-0000-1000-8000-00805f9b34fb)
+ * to be discovered by the phone app. Waits for pairing or timeout (60 seconds).
+ * 
+ * @param device_name User-friendly device name (e.g., "DeskClock")
+ * @param timeout_ms Timeout in milliseconds (0 = no timeout, default: 60000)
+ * @return true if successfully paired, false on timeout or error
+ */
+bool ble_start_pairing_advertising(const char *device_name, uint32_t timeout_ms);
+
+/**
+ * @brief Connect to phone's GATT server and read all data
+ * 
+ * After successful pairing, connects to the phone as a GATT client and reads
+ * all available data services (time, date, weather, events, news, custom text).
+ * Requires an encrypted, bonded connection.
+ * 
+ * @param data_out Pointer to structure to store retrieved data
+ * @return true if data was successfully retrieved, false otherwise
+ */
+bool ble_connect_and_read_data(ble_clock_data_t *data_out);
+
+/**
+ * @brief Stop BLE advertising
+ * 
+ * Stops any ongoing advertising.
+ */
+void ble_stop_advertising(void);
+
+/**
+ * @brief Deinitialize BLE stack
+ * 
+ * Cleanup BLE resources. Should be called when BLE is no longer needed.
+ */
+void ble_deinit(void);
+
+/**
+ * @brief Check if device is currently paired/bonded
+ * 
+ * @return true if bonded with a phone, false otherwise
+ */
+bool ble_is_bonded(void);
 
 #endif // BLE_TIME_SYNC_H
