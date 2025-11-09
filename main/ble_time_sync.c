@@ -180,6 +180,29 @@ static void ble_on_sync_cb(void)
     } else {
         ESP_LOGI(TAG, "Address configured, type: %d", own_addr_type);
     }
+    
+    // Check if we have any bonded peers from NVS
+    int num_peers;
+    rc = ble_store_util_count(BLE_STORE_OBJ_TYPE_OUR_SEC, &num_peers);
+    if (rc == 0 && num_peers > 0) {
+        ESP_LOGI(TAG, "Found %d bonded peer(s) in NVS", num_peers);
+        
+        // Load the first bonded peer address
+        struct ble_store_key_sec key_sec;
+        struct ble_store_value_sec value_sec;
+        
+        memset(&key_sec, 0, sizeof(key_sec));
+        key_sec.peer_addr = bonded_peer_addr;
+        
+        rc = ble_store_util_bonded_peers(&bonded_peer_addr, &num_peers, 1);
+        if (rc == 0 && num_peers > 0) {
+            has_bonded_peer = true;
+            ESP_LOGI(TAG, "Loaded bonded peer address from NVS");
+        }
+    } else {
+        ESP_LOGI(TAG, "No bonded peers found in NVS");
+        has_bonded_peer = false;
+    }
 }
 
 static void ble_on_reset_cb(int reason)
