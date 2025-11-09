@@ -162,13 +162,16 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
                                   (time_x + time_w);
         int32_t clear_width = max_x - min_x;
 
-        Rect_t area = { .x      = min_x - 20,
-                        .y      = time_y - time_h - 20,
-                        .width  = clear_width + 40,
-                        .height = time_h + 40 };
+        Rect_t area = {
+            .x      = min_x - 20,
+            .y      = time_y - time_h - 20,
+            .width  = clear_width + 40,
+            .height = time_h + 40,
+        };
 
         ESP_LOGI(TAG, "Partial refresh - time only");
-        epd_clear_area(area);
+        epd_clear_area_cycles(area, 1, 20);
+        // epd_clear_area(area);
 
         display_draw_time(time_str, time_x, time_y);
 
