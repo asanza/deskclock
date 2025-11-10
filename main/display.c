@@ -179,7 +179,7 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         }
 
         // Clear display and write framebuffer
-        epd_clear_area_cycles(epd_full_screen(), 2, 10);
+        epd_clear_area_cycles(epd_full_screen(), 2, 20);
         epd_draw_grayscale_image(epd_full_screen(), framebuffer);
     } else {
         // Partial refresh - clear a fixed maximum area for any time change to avoid ghosting
@@ -203,7 +203,7 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         display_draw_time(time_str, time_x, time_y);
 
         // Perform partial update cycles on that area then push new framebuffer
-        epd_clear_area_cycles(area, 1, 10);
+        epd_clear_area_cycles(area, 1, 20);
         epd_draw_grayscale_image(epd_full_screen(), framebuffer);
     }
 }
