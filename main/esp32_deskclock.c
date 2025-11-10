@@ -174,6 +174,17 @@ app_main(void)
         ESP_LOGI(TAG, "Woke up from timer");
     }
 
+    if(button_long_pressed) {
+        ble_init();
+        ble_start_pairing_advertising("DeskClock", 60000);
+        if(ble_is_bonded())
+        {
+            ble_clock_data_t cdt;
+            ble_connect_and_read_data(&cdt);
+        }
+        ble_stop_advertising();
+    }
+
     // Sync internal RTC from external RTC
     clock_update_from_pcf8563(dev_handle);
 

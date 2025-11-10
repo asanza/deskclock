@@ -118,7 +118,7 @@ ble_store_config_init(void)
     ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
     ble_hs_cfg.sm_bonding = 1;
     ble_hs_cfg.sm_mitm = 0;  // No man-in-the-middle protection (Just Works)
-    ble_hs_cfg.sm_sc = 0;    // Disable secure connections for Just Works pairing
+    ble_hs_cfg.sm_sc = 1;    // Enable secure connections (required by modern phones)
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
 }
@@ -229,8 +229,15 @@ static int ble_gap_event_handler(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "MTU update; mtu=%d", event->mtu.value);
         break;
 
+    case BLE_GAP_EVENT_DATA_LEN_CHG:
+        ESP_LOGI(TAG, "conn_handle; %d", event->data_len_chg.conn_handle);
+        ESP_LOGI(TAG, "max_rx_octets; %d", event->data_len_chg.max_rx_octets);
+        ESP_LOGI(TAG, "max_rx_time; %d", event->data_len_chg.max_rx_time);
+        ESP_LOGI(TAG, "max_tx_octets; %d", event->data_len_chg.max_tx_octets);
+        ESP_LOGI(TAG, "max_tx_time; %d", event->data_len_chg.max_tx_time);
+        break;
     default:
-        ESP_LOGD(TAG, "Unhandled GAP event: %d", event->type);
+        ESP_LOGI(TAG, "Unhandled GAP event: %d", event->type);
         break;
     }
 
@@ -447,7 +454,11 @@ bool ble_start_pairing_advertising(const char *device_name, uint32_t timeout_ms)
     // Make sure no advertising is active
     ble_gap_adv_stop();
     vTaskDelay(pdMS_TO_TICKS(100));
-    
+
+    ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_PEER_SEC, NULL);
+    ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_OUR_SEC, NULL);
+    ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_CCCD, NULL);
+
     // Use the simpler fields API but with minimal data
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
@@ -486,17 +497,17 @@ bool ble_start_pairing_advertising(const char *device_name, uint32_t timeout_ms)
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-    
+
+    advertising_active = true;
+    pairing_complete = false;
+
     rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, timeout_ms,
                            &adv_params, ble_gap_event_handler, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to start advertising; rc=%d", rc);
         return false;
     }
-    
-    advertising_active = true;
-    pairing_complete = false;
-    
+        
     ESP_LOGI(TAG, "Advertising started, waiting for pairing...");
     
     // Wait for pairing or timeout
