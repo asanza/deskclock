@@ -72,4 +72,16 @@ void ble_deinit(void);
  */
 bool ble_is_bonded(void);
 
+/**
+ * @brief Clear all stored bonding information (bonds, keys, CCCDs)
+ *
+ * Removes all security-related entries from the NimBLE persistent store.
+ * Use this when you explicitly want to force the device to forget the
+ * previously paired phone and allow a fresh pairing. After calling this,
+ * call ble_start_pairing_advertising() again to initiate a new pairing.
+ *
+ * @return true if deletion calls were issued (even if entries didn't exist), false if BLE not initialized
+ */
+bool ble_clear_bonds(void);
+
 #endif // BLE_TIME_SYNC_H

@@ -11,9 +11,6 @@
 
 #define TAG "display"
 
-// RTC memory to persist last time width across deep sleep
-extern int32_t last_time_w;
-
 // Global framebuffer
 static uint8_t *framebuffer = NULL;
 
@@ -122,6 +119,11 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
                            const char *timezone_str, bool full_clear,
                            bool show_battery_icon)
 {
+    // Cached maximum possible time width for clearing partial refresh area.
+    // We use a representative widest string composed of the widest digit glyphs.
+    int32_t max_time_w = 0;
+    int32_t max_time_h = 0;
+    static const char *WIDEST_TIME_STR = "88:88"; // Digits '8' typically widest
     // Get dimensions for all elements
     int32_t time_w, time_h;
     int32_t date_w, date_h;
@@ -153,6 +155,9 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
     int32_t date_x     = (EPD_WIDTH - date_w) / 2;
     int32_t timezone_x = (EPD_WIDTH - timezone_w) / 2;
 
+    display_get_time_bounds(WIDEST_TIME_STR, &max_time_w, &max_time_h);
+    ESP_LOGI(TAG, "Computed max time bounds: w=%d h=%d for '%s'", max_time_w, max_time_h, WIDEST_TIME_STR);
+
     if (full_clear) {
         // Full screen refresh
         ESP_LOGI(TAG, "Full screen refresh");
@@ -176,39 +181,30 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         // Clear display and write framebuffer
         epd_clear_area_cycles(epd_full_screen(), 2, 10);
         epd_draw_grayscale_image(epd_full_screen(), framebuffer);
-
-        last_time_w = time_w;
     } else {
-        // Partial refresh - only update time area
-        int32_t last_time_x = (EPD_WIDTH - last_time_w) / 2;
-        int32_t min_x       = (last_time_x < time_x) ? last_time_x : time_x;
-        int32_t max_x       = (last_time_x + last_time_w > time_x + time_w) ?
-                                  (last_time_x + last_time_w) :
-                                  (time_x + time_w);
-        int32_t clear_width = max_x - min_x;
+        // Partial refresh - clear a fixed maximum area for any time change to avoid ghosting
+        // Center position for widest time string
+        int32_t max_time_x = (EPD_WIDTH - max_time_w) / 2;
 
+        // Use max_time_h (should match time_h, but we rely on widest precomputed metrics)
         Rect_t area = {
-            .x      = min_x - 20,
-            .y      = time_y - time_h - 20,
-            .width  = clear_width + 40,
-            .height = time_h + 40,
+            .x      = max_time_x - 20,
+            .y      = time_y - max_time_h - 20,
+            .width  = max_time_w + 40,
+            .height = max_time_h + 40,
         };
 
-        ESP_LOGI(TAG, "Partial refresh - time only");
-        
+        ESP_LOGI(TAG, "Partial refresh - time only (fixed max area)");
+
         // Clear only the time area in framebuffer (rest stays from previous full draw)
         epd_fill_rect(area.x, area.y, area.width, area.height, 0xFF, framebuffer);
-        
+
         // Draw new time to framebuffer at absolute position
-        // writeln expects full EPD_WIDTH stride, which framebuffer has
         display_draw_time(time_str, time_x, time_y);
-        
-        // Clear the display area and write full framebuffer
-        // The EPD controller will only update the area we cleared
+
+        // Perform partial update cycles on that area then push new framebuffer
         epd_clear_area_cycles(area, 1, 10);
         epd_draw_grayscale_image(epd_full_screen(), framebuffer);
-
-        last_time_w = time_w;
     }
 }
 

@@ -14,9 +14,6 @@
 
 #define TAG "main"
 
-// RTC memory to persist across deep sleep
-RTC_DATA_ATTR int32_t last_time_w = 0;
-
 static uint32_t
 wait_for_button_release(void)
 {

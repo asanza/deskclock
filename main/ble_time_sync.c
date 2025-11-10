@@ -455,9 +455,8 @@ bool ble_start_pairing_advertising(const char *device_name, uint32_t timeout_ms)
     ble_gap_adv_stop();
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_PEER_SEC, NULL);
-    ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_OUR_SEC, NULL);
-    ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_CCCD, NULL);
+    // NOTE: Bond data is no longer automatically cleared here.
+    // To force a fresh pairing, call ble_clear_bonds() explicitly before advertising.
 
     // Use the simpler fields API but with minimal data
     struct ble_hs_adv_fields fields;
@@ -556,6 +555,27 @@ void ble_stop_advertising(void)
         advertising_active = false;
         ESP_LOGI(TAG, "Advertising stopped");
     }
+}
+
+bool ble_clear_bonds(void)
+{
+    if (!ble_initialized) {
+        ESP_LOGW(TAG, "BLE not initialized - cannot clear bonds");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Clearing all stored bond information");
+
+    int rc_peer = ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_PEER_SEC, NULL);
+    int rc_our  = ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_OUR_SEC, NULL);
+    int rc_cccd = ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_CCCD, NULL);
+
+    ESP_LOGI(TAG, "Bond delete results: peer_sec_rc=%d our_sec_rc=%d cccd_rc=%d", rc_peer, rc_our, rc_cccd);
+
+    has_bonded_peer = false;
+    pairing_complete = false;
+
+    return true; // We issued delete attempts regardless of individual rc
 }
 
 // GATT client read callback context
