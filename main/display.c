@@ -188,9 +188,9 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
 
         // Use max_time_h (should match time_h, but we rely on widest precomputed metrics)
         Rect_t area = {
-            .x      = max_time_x - 20,
+            .x      = max_time_x - 40,
             .y      = time_y - max_time_h - 20,
-            .width  = max_time_w + 40,
+            .width  = max_time_w + 80,
             .height = max_time_h + 40,
         };
 
