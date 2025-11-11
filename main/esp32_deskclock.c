@@ -7,7 +7,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <utilities.h>
-#include "ble_time_sync.h"
 #include "clock.h"
 #include "display.h"
 #include "battery.h"
@@ -38,57 +37,6 @@ wait_for_button_release(void)
     rtc_gpio_deinit(BUTTON_1);
     
     return press_duration_ms;
-}
-
-static void
-handle_button_pairing(void)
-{
-    ESP_LOGI(TAG, "Button 1 pressed - starting BLE pairing mode");
-    
-    if (!ble_init()) {
-        ESP_LOGE(TAG, "Failed to initialize BLE");
-        return;
-    }
-    
-    // Start pairing advertising with 60 second timeout
-    if (ble_start_pairing_advertising("DeskClock", 60000)) {
-        ESP_LOGI(TAG, "Successfully paired with phone!");
-        ESP_LOGI(TAG, "Bond should now be stored in NVS");
-    } else {
-        ESP_LOGW(TAG, "Pairing failed or timed out");
-    }
-    
-    ble_deinit();
-}
-
-static void
-handle_bonded_device_sync(void)
-{
-    if (!ble_init()) {
-        ESP_LOGE(TAG, "Failed to initialize BLE");
-        return;
-    }
-    
-    if (ble_is_bonded()) {
-        ESP_LOGI(TAG, "Bonded device found, connecting to read data...");
-        
-        ble_clock_data_t data;
-        if (ble_connect_and_read_data(&data)) {
-            ESP_LOGI(TAG, "Data received from phone");
-            ESP_LOGI(TAG, "  Time: %s", data.current_time);
-            ESP_LOGI(TAG, "  Date: %s", data.current_date);
-            ESP_LOGI(TAG, "  Weather: %s", data.weather);
-            
-            // TODO: Update display with received data
-            // TODO: Update RTC if time data is received
-        } else {
-            ESP_LOGW(TAG, "Failed to read data from bonded device");
-        }
-    } else {
-        ESP_LOGI(TAG, "No bonded device, skipping BLE connection");
-    }
-    
-    ble_deinit();
 }
 
 static void
@@ -172,14 +120,7 @@ app_main(void)
     }
 
     if(button_long_pressed) {
-        ble_init();
-        ble_start_pairing_advertising("DeskClock", 60000);
-        if(ble_is_bonded())
-        {
-            ble_clock_data_t cdt;
-            ble_connect_and_read_data(&cdt);
-        }
-        ble_stop_advertising();
+        // start ble
     }
 
     // Sync internal RTC from external RTC
