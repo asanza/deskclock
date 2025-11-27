@@ -55,7 +55,7 @@ int32_t display_draw_date(const char *date_str, int32_t x, int32_t y);
  * @param y Y position (baseline) to draw at
  * @return Width of the rendered text
  */
-int32_t display_draw_timezone(const char *timezone_str, int32_t x, int32_t y);
+int32_t display_draw_timezone(const char *timezone_str, int32_t x, int32_t y, uint8_t* framebuffer);
 
 /**
  * @brief Calculate dimensions for time text
@@ -91,7 +91,7 @@ void display_get_timezone_bounds(const char *timezone_str, int32_t *width, int32
  * @param x X coordinate
  * @param y Y coordinate
  */
-void display_draw_icon(const void *img_ptr, int x, int y);
+void display_draw_icon(const void *img_ptr, int x, int y, uint8_t* framebuffer);
 
 /**
  * @brief Display an error message centered on the screen

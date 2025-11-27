@@ -50,7 +50,7 @@ display_poweroff(void)
 }
 
 void
-display_draw_icon(const void *img_ptr, int x, int y)
+display_draw_icon(const void *img_ptr, int x, int y, uint8_t* framebuffer)
 {
     const GFXimage *img = (const GFXimage *)img_ptr;
 
@@ -107,7 +107,7 @@ display_draw_date(const char *date_str, int32_t x, int32_t y)
 }
 
 int32_t
-display_draw_timezone(const char *timezone_str, int32_t x, int32_t y)
+display_draw_timezone(const char *timezone_str, int32_t x, int32_t y, uint8_t* framebuffer)
 {
     int32_t original_x = x;
     writeln((GFXfont *)&Quicksand_18, timezone_str, &x, &y, framebuffer);
@@ -170,17 +170,11 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         display_draw_date(date_str, date_x, date_y);
 
         if (timezone_str != NULL) {
-            display_draw_timezone(timezone_str, timezone_x, timezone_y);
-        }
-
-        // Draw battery icon if battery is low
-        if (show_battery_icon) {
-            display_draw_icon(&batt, 20, 20);
+            display_draw_timezone(timezone_str, timezone_x, timezone_y, framebuffer);
         }
 
         // Clear display and write framebuffer
         epd_clear_area_cycles(epd_full_screen(), 2, 20);
-        epd_draw_grayscale_image(epd_full_screen(), framebuffer);
     } else {
         // Partial refresh - clear a fixed maximum area for any time change to avoid ghosting
         // Center position for widest time string
@@ -204,13 +198,19 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
 
         // Draw battery icon if battery is low
         if (show_battery_icon) {
-            display_draw_icon(&batt, 20, 20);
+            display_draw_icon(&batt, 20, 20, framebuffer);
         }
 
         // Perform partial update cycles on that area then push new framebuffer
         epd_clear_area_cycles(area, 1, 20);
-        epd_draw_grayscale_image(epd_full_screen(), framebuffer);
     }
+
+    // Draw battery icon if battery is low
+    if (show_battery_icon) {
+        display_draw_icon(&batt, 20, 20, framebuffer);
+    }
+
+    epd_draw_grayscale_image(epd_full_screen(), framebuffer);
 }
 
 void display_draw_error(const char *str)
