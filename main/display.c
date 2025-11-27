@@ -196,11 +196,6 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         // Draw new time to framebuffer at absolute position
         display_draw_time(time_str, time_x, time_y);
 
-        // Draw battery icon if battery is low
-        if (show_battery_icon) {
-            display_draw_icon(&batt, 20, 20, framebuffer);
-        }
-
         // Perform partial update cycles on that area then push new framebuffer
         epd_clear_area_cycles(area, 1, 20);
     }
