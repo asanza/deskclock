@@ -10,6 +10,7 @@
 #include "clock.h"
 #include "display.h"
 #include "battery.h"
+#include "ble.h"
 
 #define TAG "main"
 
@@ -119,9 +120,10 @@ app_main(void)
         ESP_LOGI(TAG, "Woke up from timer");
     }
 
-    if(button_long_pressed) {
+//    if(button_long_pressed) {
         // start ble
-    }
+        // start_ble();
+//    }
 
     // Sync internal RTC from external RTC
     clock_update_from_pcf8563(dev_handle);
