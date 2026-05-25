@@ -59,7 +59,7 @@ void weather_format_display(const weather_data_t *data, char *out, size_t len)
     }
 
     /* Base: "Munich 18C Partly cloudy" */
-    int used = snprintf(out, len, "%s %dC %s",
+    int used = snprintf(out, len, "%s %d\xc2\xb0""C %s",
                         data->location,
                         (int)data->temperature,
                         condition_str(data->condition));

@@ -36,7 +36,7 @@ class WeatherData {
   String toDisplayString() {
     if (alertLevel >= 3) return '! ${alertText.isNotEmpty ? alertText : "WEATHER ALERT"}';
     final cond = _conditionName(condition);
-    final base = '$location ${temperature}C $cond';
+    final base = '$location ${temperature}°C $cond';
     return rainProb >= 50 ? '$base $rainProb%' : base;
   }
 }
