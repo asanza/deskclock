@@ -4,6 +4,7 @@
 #include <Quicksand_28.h>
 #include <Quicksand_18.h>
 #include <batt_icon.h>
+#include <bt_icon.h>
 #include <esp_log.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,7 +118,7 @@ display_draw_timezone(const char *timezone_str, int32_t x, int32_t y, uint8_t* f
 void
 display_draw_time_and_date(const char *time_str, const char *date_str,
                            const char *timezone_str, bool full_clear,
-                           bool show_battery_icon)
+                           bool show_battery_icon, bool show_bt_icon)
 {
     // Cached maximum possible time width for clearing partial refresh area.
     // We use a representative widest string composed of the widest digit glyphs.
@@ -200,9 +201,17 @@ display_draw_time_and_date(const char *time_str, const char *date_str,
         epd_clear_area_cycles(area, 1, 20);
     }
 
-    // Draw battery icon if battery is low
+    /* Always clear icon areas first so stale pixels don't persist across
+     * partial refreshes when an icon is no longer shown. */
+    epd_fill_rect(20, 20, 30, 30, 0xFF, framebuffer);
+    epd_fill_rect(60, 20, 30, 30, 0xFF, framebuffer);
+
     if (show_battery_icon) {
         display_draw_icon(&batt, 20, 20, framebuffer);
+    }
+
+    if (show_bt_icon) {
+        display_draw_icon(&bt_icon, 60, 20, framebuffer);
     }
 
     epd_draw_grayscale_image(epd_full_screen(), framebuffer);

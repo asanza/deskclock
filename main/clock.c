@@ -49,8 +49,15 @@ void clock_update_from_pcf8563(i2c_master_dev_handle_t dev)
 
     if (valid) {
         struct timeval tv;
+        /* PCF8563 stores UTC. Force TZ=UTC0 so mktime treats the struct tm
+         * as UTC regardless of whatever TZ was previously set in this session.
+         * Then restore the display timezone so localtime_r works correctly. */
+        setenv("TZ", "UTC0", 1);
+        tzset();
         tv.tv_sec  = mktime(&tm);
         tv.tv_usec = 0;
+        setenv("TZ", CLOCK_TIMEZONE, 1);
+        tzset();
         settimeofday(&tv, NULL);
 
         ESP_LOGI(TAG, "Updated internal RTC: %04d-%02d-%02d %02d:%02d:%02d",
@@ -79,9 +86,6 @@ void clock_get_time_strings(char *time_str, char *date_str, struct tm *tm_out)
 {
     struct timeval tv;
     struct tm      tm;
-
-    setenv("TZ", CLOCK_TIMEZONE, 1);
-    tzset();
 
     gettimeofday(&tv, NULL);
     localtime_r(&tv.tv_sec, &tm);

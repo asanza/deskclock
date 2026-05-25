@@ -21,11 +21,12 @@ void display_poweroff(void);
  * @param date_str Date string (e.g., "Monday, January 1 2024")
  * @param timezone_str Optional timezone string (e.g., "Beijing 00:00 | Quito 00:00"), can be NULL
  * @param full_clear If true, do full screen refresh; if false, partial refresh
- * @param show_battery_icon If true, show battery icon in corner
+ * @param show_battery_icon If true, show battery low icon
+ * @param show_bt_icon      If true, show Bluetooth active icon
  */
 void display_draw_time_and_date(const char *time_str, const char *date_str,
-                                const char *timezone_str, bool full_clear, 
-                                bool show_battery_icon);
+                                const char *timezone_str, bool full_clear,
+                                bool show_battery_icon, bool show_bt_icon);
 
 /**
  * @brief Draw main time display

@@ -120,24 +120,27 @@ app_main(void)
         ESP_LOGI(TAG, "Woke up from timer");
     }
 
-//    if(button_long_pressed) {
-        // start ble
-        // start_ble();
-//    }
-
-    // Sync internal RTC from external RTC
-    clock_update_from_pcf8563(dev_handle);
-
-    // Get current time and format for display
     char      time_str[16];
     char      date_str[64];
     struct tm current_time;
+    bool      show_battery_icon = battery_is_low(battery_voltage);
+
+    if (button_long_pressed) {
+        // Show BT icon on display so user knows BLE is advertising
+        clock_update_from_pcf8563(dev_handle);
+        clock_get_time_strings(time_str, date_str, &current_time);
+        display_draw_time_and_date(time_str, date_str, NULL, false, show_battery_icon, true);
+        display_poweroff();
+
+        start_ble(dev_handle);
+    }
+
+    // Sync internal RTC from external RTC (re-reads PCF8563 after possible BLE time update)
+    clock_update_from_pcf8563(dev_handle);
     clock_get_time_strings(time_str, date_str, &current_time);
 
-    // Update display
     bool full_clear = (current_time.tm_min % 30 == 0) || reset_button_pressed;
-    bool show_battery_icon = battery_is_low(battery_voltage);
-    display_draw_time_and_date(time_str, date_str, NULL, full_clear, show_battery_icon);
+    display_draw_time_and_date(time_str, date_str, NULL, full_clear, show_battery_icon, false);
     display_poweroff();
 
     // Configure and enter deep sleep
