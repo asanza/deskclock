@@ -16,6 +16,20 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 subprojects {
+    afterEvaluate {
+        if (plugins.hasPlugin("com.android.library") || plugins.hasPlugin("com.android.application")) {
+            extensions.configure<com.android.build.gradle.BaseExtension> {
+                compileSdkVersion(36)
+            }
+            // Gradle 9 / AGP 9 lint-vital task has a known incremental-build bug
+            // with some plugins — skip it for library subprojects.
+            tasks.matching { it.name == "lintVitalAnalyzeRelease" }.configureEach {
+                enabled = false
+            }
+        }
+    }
+}
+subprojects {
     project.evaluationDependsOn(":app")
 }
 

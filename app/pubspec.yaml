@@ -39,7 +39,7 @@ dependencies:
   geolocator: ^13.0.0
   geocoding: ^3.0.0
   http: ^1.2.0
-  android_alarm_manager_plus: ^3.0.3
+  android_alarm_manager_plus: ^5.0.0
   shared_preferences: ^2.3.0
 
 dev_dependencies:
