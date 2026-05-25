@@ -110,32 +110,37 @@ class _SyncPageState extends State<SyncPage> {
   }
 
   Future<void> _sync() async {
-    _setStatus(_State.fetching, 'Fetching weather…');
+    _setStatus(_State.fetching, 'Getting location…');
 
     // Get location — try fresh, fall back to cached
     double? lat, lon;
-    final pos = await getFreshPosition();
+    String? locationError;
+
+    final (pos, locErr) = await getFreshPosition();
     if (pos != null) {
       lat = pos.latitude;
       lon = pos.longitude;
       await cachePosition(lat, lon);
     } else {
+      locationError = locErr;
       final cached = await loadCachedPosition();
       if (cached != null) {
         lat = cached['lat'];
         lon = cached['lon'];
+        locationError = null; // cached coords are fine
       }
     }
 
     WeatherData? weather;
     if (lat != null && lon != null) {
+      _setStatus(_State.fetching, 'Fetching weather…');
       final owmKey = _apiKeyCtrl.text.trim();
       weather = await fetchWeather(lat, lon, owmKey.isNotEmpty ? owmKey : null);
     }
 
     _setStatus(_State.scanning, 'Scanning for DeskClock…');
 
-    // Always sync time; weather is best-effort (null = time-only sync).
+    // Always sync time; weather is best-effort.
     final result = await syncToDevice(weather);
 
     if (result == 'ok') {
@@ -147,8 +152,10 @@ class _SyncPageState extends State<SyncPage> {
         await prefs.setString('last_wx_str', wxStr);
         await prefs.setString('last_sync_at', at);
         setState(() { _lastWx = wxStr; _lastAt = at; });
+        _setStatus(_State.done, 'Clock updated!');
+      } else {
+        _setStatus(_State.done, locationError ?? 'No weather data');
       }
-      _setStatus(_State.done, weather != null ? 'Clock updated!' : 'Time synced (no weather — check location)');
     } else {
       _setStatus(_State.error, result);
     }

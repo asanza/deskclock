@@ -48,26 +48,35 @@ String _conditionName(int c) {
 
 // ---------- location ----------
 
-Future<Position?> getFreshPosition() async {
+/// Returns (position, errorMessage). errorMessage is null on success.
+Future<(Position?, String?)> getFreshPosition() async {
+  if (!await Geolocator.isLocationServiceEnabled()) {
+    return (null, 'Location services are off — enable in Android Settings → Location');
+  }
+
+  LocationPermission perm = await Geolocator.checkPermission();
+  if (perm == LocationPermission.denied) {
+    perm = await Geolocator.requestPermission();
+  }
+  if (perm == LocationPermission.deniedForever) {
+    return (null, 'Location permission permanently denied — grant in App Info → Permissions');
+  }
+  if (perm == LocationPermission.denied) {
+    return (null, 'Location permission denied');
+  }
+
   try {
-    if (!await Geolocator.isLocationServiceEnabled()) return null;
-
-    LocationPermission perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
-    }
-    if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return null;
-
-    // Last known position is instant; fall back to a fresh fix if unavailable.
-    return await Geolocator.getLastKnownPosition() ??
+    // Last-known is instant (uses cached OS value); fallback to fresh fix.
+    final pos = await Geolocator.getLastKnownPosition() ??
         await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.low,
-            timeLimit: Duration(seconds: 20),
+            accuracy: LocationAccuracy.lowest,
+            timeLimit: Duration(seconds: 30),
           ),
         );
-  } catch (_) {
-    return null;
+    return (pos, null);
+  } catch (e) {
+    return (null, 'Location error: $e');
   }
 }
 
