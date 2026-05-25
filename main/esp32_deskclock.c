@@ -147,7 +147,16 @@ app_main(void)
     char weather_str[64] = "";
     weather_data_t wx;
     if (weather_load(&wx)) {
-        weather_format_display(&wx, weather_str, sizeof(weather_str));
+        uint32_t age = weather_age_seconds();
+        if (age < 7200) {
+            weather_format_display(&wx, weather_str, sizeof(weather_str));
+        } else if (wx.sunrise_min > 0 || wx.sunset_min > 0) {
+            snprintf(weather_str, sizeof(weather_str), "^%02u:%02u  v%02u:%02u",
+                     wx.sunrise_min / 60, wx.sunrise_min % 60,
+                     wx.sunset_min  / 60, wx.sunset_min  % 60);
+        } else {
+            snprintf(weather_str, sizeof(weather_str), "--");
+        }
     }
 
     /* ---- Update display ---- */

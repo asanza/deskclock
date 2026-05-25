@@ -21,6 +21,8 @@ class WeatherData {
   final int    condition;     // weather_condition_t 0-7
   final int    rainProb;      // 0-100 %
   final int    alertLevel;    // 0-4
+  final int    sunriseMin;    // minutes since midnight, local time
+  final int    sunsetMin;     // minutes since midnight, local time
   final String location;      // city name, max 19 chars
   final String alertText;     // alert description, max 47 chars
 
@@ -29,6 +31,8 @@ class WeatherData {
     required this.condition,
     required this.rainProb,
     required this.alertLevel,
+    required this.sunriseMin,
+    required this.sunsetMin,
     required this.location,
     required this.alertText,
   });
@@ -97,13 +101,15 @@ Future<Map<String, double>?> loadCachedPosition() async {
 // ---------- weather fetch ----------
 
 Future<WeatherData?> fetchWeather(double lat, double lon, String? owmApiKey) async {
-  // Open-Meteo — free, no key
+  // Open-Meteo — free, no key; timezone=auto so daily sunrise/sunset
+  // and hourly indices are in local time.
   final meteoUrl = Uri.parse(
     'https://api.open-meteo.com/v1/forecast'
     '?latitude=$lat&longitude=$lon'
     '&current=temperature_2m,weather_code'
     '&hourly=precipitation_probability'
-    '&forecast_days=1&timezone=UTC',
+    '&daily=sunrise,sunset'
+    '&forecast_days=1&timezone=auto',
   );
 
   final http.Response meteoResp;
@@ -114,12 +120,22 @@ Future<WeatherData?> fetchWeather(double lat, double lon, String? owmApiKey) asy
   }
   if (meteoResp.statusCode != 200) return null;
 
-  final m       = jsonDecode(meteoResp.body);
-  final temp    = (m['current']['temperature_2m'] as num).round();
-  final wmo     = (m['current']['weather_code']  as num).toInt();
-  final utcHour = DateTime.now().toUtc().hour;
-  final precip  = m['hourly']['precipitation_probability'] as List;
-  final rain    = precip.length > utcHour + 1 ? (precip[utcHour + 1] as num).toInt() : 0;
+  final m         = jsonDecode(meteoResp.body);
+  final temp      = (m['current']['temperature_2m'] as num).round();
+  final wmo       = (m['current']['weather_code']  as num).toInt();
+  final localHour = DateTime.now().hour;
+  final precip    = m['hourly']['precipitation_probability'] as List;
+  final rain      = precip.length > localHour + 1 ? (precip[localHour + 1] as num).toInt() : 0;
+
+  // Sunrise/sunset — Open-Meteo returns ISO strings like "2024-05-26T06:12"
+  int sunriseMin = 0;
+  int sunsetMin  = 0;
+  try {
+    final srStr = (m['daily']['sunrise'] as List).first as String;
+    final ssStr = (m['daily']['sunset']  as List).first as String;
+    sunriseMin = _isoTimeToMinutes(srStr);
+    sunsetMin  = _isoTimeToMinutes(ssStr);
+  } catch (_) {}
 
   // Reverse geocoding via OS geocoder
   String city = '';
@@ -155,9 +171,19 @@ Future<WeatherData?> fetchWeather(double lat, double lon, String? owmApiKey) asy
     condition:   _wmoToCondition(wmo),
     rainProb:    rain,
     alertLevel:  alertLevel,
+    sunriseMin:  sunriseMin,
+    sunsetMin:   sunsetMin,
     location:    city,
     alertText:   alertText,
   );
+}
+
+/// Parse "2024-05-26T06:12" → 6*60+12 = 372 minutes.
+int _isoTimeToMinutes(String iso) {
+  final t = iso.length >= 16 ? iso.substring(11, 16) : '';
+  final parts = t.split(':');
+  if (parts.length != 2) return 0;
+  return (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
 }
 
 int _wmoToCondition(int wmo) {
@@ -183,18 +209,22 @@ int _owmAlertLevel(String event) {
 
 // ---------- BLE write ----------
 
-/// Pack WeatherData into the 72-byte binary layout the ESP32 expects.
+/// Pack WeatherData into the 76-byte binary layout the ESP32 expects.
+/// Offsets: [0] temp [1] cond [2] rain [3] alert [4-5] sunrise [6-7] sunset
+///          [8..27] location [28..75] alert_text
 Uint8List packWeather(WeatherData wd) {
-  final buf = Uint8List(72);
+  final buf = Uint8List(76);
   final bd  = ByteData.sublistView(buf);
 
-  bd.setInt8( 0, wd.temperature.clamp(-128, 127));
-  bd.setUint8(1, wd.condition.clamp(0, 7));
-  bd.setUint8(2, wd.rainProb.clamp(0, 100));
-  bd.setUint8(3, wd.alertLevel.clamp(0, 4));
+  bd.setInt8(  0, wd.temperature.clamp(-128, 127));
+  bd.setUint8( 1, wd.condition.clamp(0, 7));
+  bd.setUint8( 2, wd.rainProb.clamp(0, 100));
+  bd.setUint8( 3, wd.alertLevel.clamp(0, 4));
+  bd.setUint16(4, wd.sunriseMin.clamp(0, 1439), Endian.little);
+  bd.setUint16(6, wd.sunsetMin.clamp(0, 1439),  Endian.little);
 
-  _writeFixedStr(buf,  4, 20, wd.location);
-  _writeFixedStr(buf, 24, 48, wd.alertText);
+  _writeFixedStr(buf,  8, 20, wd.location);
+  _writeFixedStr(buf, 28, 48, wd.alertText);
 
   return buf;
 }

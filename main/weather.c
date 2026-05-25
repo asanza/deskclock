@@ -8,6 +8,7 @@
 #define TAG          "weather"
 #define NVS_NS       "deskclock"
 #define NVS_KEY      "weather"
+#define NVS_KEY_TS   "wx_ts"
 
 bool weather_load(weather_data_t *out)
 {
@@ -28,11 +29,34 @@ void weather_save(const weather_data_t *data)
         return;
     }
     nvs_set_blob(h, NVS_KEY, data, sizeof(weather_data_t));
+
+    time_t now;
+    time(&now);
+    nvs_set_u32(h, NVS_KEY_TS, (uint32_t)now);
+
     nvs_commit(h);
     nvs_close(h);
-    ESP_LOGI(TAG, "Weather saved: %s %dC cond=%d rain=%d%% alert=%d",
-             data->location, data->temperature,
-             data->condition, data->rain_prob_1h, data->alert_level);
+    ESP_LOGI(TAG, "Weather saved: %s %d°C cond=%d rain=%d%% sr=%d ss=%d alert=%d",
+             data->location, data->temperature, data->condition,
+             data->rain_prob_1h, data->sunrise_min, data->sunset_min,
+             data->alert_level);
+}
+
+uint32_t weather_age_seconds(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return UINT32_MAX;
+
+    uint32_t saved_ts = 0;
+    esp_err_t ret = nvs_get_u32(h, NVS_KEY_TS, &saved_ts);
+    nvs_close(h);
+
+    if (ret != ESP_OK || saved_ts == 0) return UINT32_MAX;
+
+    time_t now;
+    time(&now);
+    if ((time_t)saved_ts > now) return 0; /* clock jumped back */
+    return (uint32_t)(now - (time_t)saved_ts);
 }
 
 static const char *condition_str(uint8_t c)
