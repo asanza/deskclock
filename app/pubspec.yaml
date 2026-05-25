@@ -1,4 +1,4 @@
-name: App
+name: deskclock
 description: "ESP32 clock companion app."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -36,6 +36,11 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_blue_plus: ^1.35.5
   permission_handler: ^11.3.1
+  geolocator: ^13.0.0
+  geocoding: ^3.0.0
+  http: ^1.2.0
+  android_alarm_manager_plus: ^3.0.3
+  shared_preferences: ^2.3.0
 
 dev_dependencies:
   flutter_test:

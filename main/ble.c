@@ -1,5 +1,6 @@
 #include "ble.h"
 #include "clock.h"
+#include "weather.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -15,27 +16,32 @@
 #include <sys/time.h>
 #include <string.h>
 
-#define TAG            "ble"
-#define DEVICE_NAME    "DeskClock"
-#define BLE_TIMEOUT_MS 60000
+#define TAG          "ble"
+#define DEVICE_NAME  "DeskClock"
 
 /*
  * Custom DeskClock GATT service
  *
- * Service UUID:          12345678-1234-1234-1234-123456789001
- * Time characteristic:   12345678-1234-1234-1234-123456789002
+ * Service UUID:            12345678-1234-1234-1234-123456789001
+ * Weather characteristic:  12345678-1234-1234-1234-123456789002  (write first)
+ * Time characteristic:     12345678-1234-1234-1234-123456789003  (write last — triggers sleep)
  *
- * The companion app writes the current UTC Unix timestamp as a
- * 4-byte little-endian uint32 to the time characteristic.
+ * Protocol: app writes weather, then writes UTC unix timestamp.
+ * Writing time signals the clock that sync is complete.
  */
 
-/* BLE_UUID128_INIT expects bytes in little-endian order. */
 static const ble_uuid128_t svc_uuid =
     BLE_UUID128_INIT(0x01, 0x90, 0x78, 0x56, 0x34, 0x12, 0x34, 0x12,
                      0x34, 0x12, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
 
-static const ble_uuid128_t chr_time_uuid =
+/* Weather: ...123456789002 */
+static const ble_uuid128_t chr_weather_uuid =
     BLE_UUID128_INIT(0x02, 0x90, 0x78, 0x56, 0x34, 0x12, 0x34, 0x12,
+                     0x34, 0x12, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
+
+/* Time: ...123456789003 */
+static const ble_uuid128_t chr_time_uuid =
+    BLE_UUID128_INIT(0x03, 0x90, 0x78, 0x56, 0x34, 0x12, 0x34, 0x12,
                      0x34, 0x12, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
 
 static i2c_master_dev_handle_t s_rtc_dev;
@@ -54,11 +60,26 @@ static void signal_done(void)
 
 static void timeout_cb(TimerHandle_t t)
 {
-    ESP_LOGI(TAG, "BLE timeout, going back to sleep");
+    ESP_LOGI(TAG, "BLE timeout");
     signal_done();
 }
 
 /* ---------- GATT ---------- */
+
+static int chr_write_weather(uint16_t conn_handle, uint16_t attr_handle,
+                             struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    if (OS_MBUF_PKTLEN(ctxt->om) != sizeof(weather_data_t)) {
+        ESP_LOGW(TAG, "Weather write: bad length %d (expected %d)",
+                 OS_MBUF_PKTLEN(ctxt->om), (int)sizeof(weather_data_t));
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+
+    weather_data_t data;
+    ble_hs_mbuf_to_flat(ctxt->om, &data, sizeof(data), NULL);
+    weather_save(&data);
+    return 0;
+}
 
 static int chr_write_time(uint16_t conn_handle, uint16_t attr_handle,
                           struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -70,11 +91,9 @@ static int chr_write_time(uint16_t conn_handle, uint16_t attr_handle,
     uint32_t utc_secs = 0;
     ble_hs_mbuf_to_flat(ctxt->om, &utc_secs, sizeof(utc_secs), NULL);
 
-    /* Update ESP32 internal RTC */
     struct timeval tv = { .tv_sec = (time_t)utc_secs, .tv_usec = 0 };
     settimeofday(&tv, NULL);
 
-    /* Persist to PCF8563 (stores UTC) */
     struct tm tm_utc;
     gmtime_r(&tv.tv_sec, &tm_utc);
     clock_set_time(s_rtc_dev, &tm_utc);
@@ -89,6 +108,11 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &svc_uuid.u,
         .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid      = &chr_weather_uuid.u,
+                .access_cb = chr_write_weather,
+                .flags     = BLE_GATT_CHR_F_WRITE,
+            },
             {
                 .uuid      = &chr_time_uuid.u,
                 .access_cb = chr_write_time,
@@ -106,10 +130,10 @@ static void advertise(void)
 {
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
-    fields.flags             = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name              = (uint8_t *)DEVICE_NAME;
-    fields.name_len          = strlen(DEVICE_NAME);
-    fields.name_is_complete  = 1;
+    fields.flags            = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    fields.name             = (uint8_t *)DEVICE_NAME;
+    fields.name_len         = strlen(DEVICE_NAME);
+    fields.name_is_complete = 1;
     ble_gap_adv_set_fields(&fields);
 
     struct ble_gap_adv_params adv_params;
@@ -163,7 +187,7 @@ static void ble_host_task(void *param)
 
 /* ---------- public ---------- */
 
-void start_ble(i2c_master_dev_handle_t rtc_dev)
+void start_ble(i2c_master_dev_handle_t rtc_dev, uint32_t timeout_ms)
 {
     s_rtc_dev  = rtc_dev;
     s_done_sem = xSemaphoreCreateBinary();
@@ -185,18 +209,17 @@ void start_ble(i2c_master_dev_handle_t rtc_dev)
     ble_hs_cfg.sync_cb  = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
 
-    s_timeout_timer = xTimerCreate("ble_to", pdMS_TO_TICKS(BLE_TIMEOUT_MS),
+    s_timeout_timer = xTimerCreate("ble_to", pdMS_TO_TICKS(timeout_ms),
                                    pdFALSE, NULL, timeout_cb);
     xTimerStart(s_timeout_timer, 0);
 
     nimble_port_freertos_init(ble_host_task);
 
-    /* Block until time is written, device disconnects, or timeout fires */
     xSemaphoreTake(s_done_sem, portMAX_DELAY);
 
-    vTaskDelay(pdMS_TO_TICKS(300)); /* let pending BLE ops finish */
+    vTaskDelay(pdMS_TO_TICKS(300));
     nimble_port_stop();
-    vTaskDelay(pdMS_TO_TICKS(100)); /* let ble_host_task exit */
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     xTimerDelete(s_timeout_timer, portMAX_DELAY);
     vSemaphoreDelete(s_done_sem);

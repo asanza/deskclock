@@ -8,13 +8,16 @@ extern "C" {
 #endif
 
 /**
- * Start BLE advertising and wait for a companion app to sync the time.
- * Blocks until time is written by the app, the connection is lost, or
- * the 60-second timeout expires. Returns after NimBLE is shut down.
+ * Start BLE advertising and wait for a companion app to sync time + weather.
+ * The app must write the weather characteristic first, then the time
+ * characteristic (which triggers shutdown). Blocks until time is written,
+ * the connection is lost, or timeout_ms elapses.
  *
- * @param rtc_dev  PCF8563 device handle used to persist the new time.
+ * @param rtc_dev     PCF8563 device handle used to persist the new time.
+ * @param timeout_ms  Advertising timeout. Use 60000 for manual sync,
+ *                    45000 for the automatic hourly sync.
  */
-void start_ble(i2c_master_dev_handle_t rtc_dev);
+void start_ble(i2c_master_dev_handle_t rtc_dev, uint32_t timeout_ms);
 
 #ifdef __cplusplus
 }

@@ -1,17 +1,20 @@
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-// Must match the UUIDs defined in ble.c
-const _serviceUuid = "12345678-1234-1234-1234-123456789001";
-const _timeCharUuid = "12345678-1234-1234-1234-123456789002";
-const _deviceName = "DeskClock";
-const _scanTimeout = Duration(seconds: 30);
+import 'background_sync.dart';
+import 'sync_service.dart';
 
-void main() => runApp(const DeskClockApp());
+const _alarmId = 42;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AndroidAlarmManager.initialize();
+  runApp(const DeskClockApp());
+}
 
 class DeskClockApp extends StatelessWidget {
   const DeskClockApp({super.key});
@@ -29,7 +32,7 @@ class DeskClockApp extends StatelessWidget {
   }
 }
 
-enum _State { idle, scanning, connecting, syncing, done, error }
+enum _State { idle, fetching, scanning, done, error }
 
 class SyncPage extends StatefulWidget {
   const SyncPage({super.key});
@@ -39,14 +42,25 @@ class SyncPage extends StatefulWidget {
 }
 
 class _SyncPageState extends State<SyncPage> {
-  _State _state = _State.idle;
-  String _message = 'Press sync to update your clock.';
-  BluetoothDevice? _device;
+  _State _state  = _State.idle;
+  String _msg    = 'Press sync to update your clock.';
+  String _lastWx = '';
+  String _lastAt = '';
+  bool   _autoSync = false;
+
+  final _apiKeyCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _requestPermissions();
+    _loadPrefs();
+  }
+
+  @override
+  void dispose() {
+    _apiKeyCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _requestPermissions() async {
@@ -57,134 +71,154 @@ class _SyncPageState extends State<SyncPage> {
     ].request();
   }
 
-  @override
-  void dispose() {
-    _device?.disconnect();
-    super.dispose();
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _apiKeyCtrl.text = prefs.getString('owm_api_key') ?? '';
+      _autoSync        = prefs.getBool('auto_sync') ?? false;
+      _lastWx          = prefs.getString('last_wx_str') ?? '';
+      _lastAt          = prefs.getString('last_sync_at') ?? '';
+    });
+  }
+
+  Future<void> _saveApiKey(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('owm_api_key', key);
+  }
+
+  Future<void> _setAutoSync(bool enable) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_sync', enable);
+    setState(() => _autoSync = enable);
+
+    if (enable) {
+      // Schedule first fire at the next UTC HH:00:10
+      final now      = DateTime.now().toUtc();
+      final nextHour = DateTime.utc(now.year, now.month, now.day, now.hour + 1, 0, 10);
+      await AndroidAlarmManager.periodic(
+        const Duration(hours: 1),
+        _alarmId,
+        backgroundSyncCallback,
+        startAt:            nextHour,
+        exact:              true,
+        wakeup:             true,
+        rescheduleOnReboot: true,
+      );
+    } else {
+      await AndroidAlarmManager.cancel(_alarmId);
+    }
   }
 
   Future<void> _sync() async {
-    if (!await FlutterBluePlus.isSupported) {
-      _setError('Bluetooth not supported on this device.');
-      return;
-    }
+    _setStatus(_State.fetching, 'Fetching weather…');
 
-    _setState(_State.scanning, 'Scanning for DeskClock…');
-
-    BluetoothDevice? found;
-
-    // Listen for results, stop as soon as we find the device
-    final sub = FlutterBluePlus.onScanResults.listen((results) {
-      if (found != null) return;
-      for (final r in results) {
-        if (r.device.platformName == _deviceName) {
-          found = r.device;
-          FlutterBluePlus.stopScan();
-          break;
-        }
+    // Get location — try fresh, fall back to cached
+    double? lat, lon;
+    final pos = await getFreshPosition();
+    if (pos != null) {
+      lat = pos.latitude;
+      lon = pos.longitude;
+      await cachePosition(lat, lon);
+    } else {
+      final cached = await loadCachedPosition();
+      if (cached != null) {
+        lat = cached['lat'];
+        lon = cached['lon'];
       }
-    });
-
-    await FlutterBluePlus.startScan(
-      withNames: [_deviceName],
-      timeout: _scanTimeout,
-    );
-
-    // Wait until scanning actually stops (device found → we called stopScan,
-    // or the 30 s timeout fired)
-    await FlutterBluePlus.isScanning.where((v) => !v).first;
-    sub.cancel();
-
-    if (found == null) {
-      _setError('DeskClock not found.\nHold the button for 2 s to enable Bluetooth,\nthen try again.');
-      return;
     }
 
-    final device = found!;
-    _device = device;
-    _setState(_State.connecting, 'Connecting…');
-
-    try {
-      await device.connect(timeout: const Duration(seconds: 10));
-    } catch (_) {
-      _setError('Could not connect to DeskClock.');
-      return;
+    WeatherData? weather;
+    if (lat != null && lon != null) {
+      final owmKey = _apiKeyCtrl.text.trim();
+      weather = await fetchWeather(lat, lon, owmKey.isNotEmpty ? owmKey : null);
     }
 
-    _setState(_State.syncing, 'Syncing time…');
+    _setStatus(_State.scanning, 'Scanning for DeskClock…');
 
-    try {
-      final services = await device.discoverServices();
-      final svc = services.where(
-        (s) => s.serviceUuid == Guid(_serviceUuid),
-      ).firstOrNull;
+    final result = weather != null
+        ? await syncToDevice(weather)
+        : 'No location available';
 
-      if (svc == null) {
-        _setError('DeskClock service not found.');
-        return;
-      }
-
-      final chr = svc.characteristics.where(
-        (c) => c.characteristicUuid == Guid(_timeCharUuid),
-      ).firstOrNull;
-
-      if (chr == null) {
-        _setError('Time characteristic not found.');
-        return;
-      }
-
-      // UTC seconds since epoch as 4-byte little-endian uint32
-      final utcSecs = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final bytes = Uint8List(4)
-        ..buffer.asByteData().setUint32(0, utcSecs, Endian.little);
-
-      await chr.write(bytes, withoutResponse: false);
-    } catch (e) {
-      _setError('Sync failed: $e');
-      return;
-    } finally {
-      await device.disconnect();
-      _device = null;
+    if (result == 'ok') {
+      final wxStr = weather!.toDisplayString();
+      final now   = DateTime.now();
+      final at    = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_wx_str', wxStr);
+      await prefs.setString('last_sync_at', at);
+      setState(() { _lastWx = wxStr; _lastAt = at; });
+      _setStatus(_State.done, 'Clock updated!');
+    } else {
+      _setStatus(_State.error, result);
     }
-
-    _setState(_State.done, 'Clock updated!\nYou can close the app.');
   }
 
-  void _setState(_State state, String message) {
-    if (mounted) setState(() { _state = state; _message = message; });
-  }
-
-  void _setError(String message) {
-    if (mounted) setState(() { _state = _State.error; _message = message; });
+  void _setStatus(_State state, String msg) {
+    if (mounted) setState(() { _state = state; _msg = msg; });
   }
 
   @override
   Widget build(BuildContext context) {
+    final busy = _state != _State.idle &&
+                 _state != _State.done &&
+                 _state != _State.error;
     return Scaffold(
       appBar: AppBar(title: const Text('DeskClock Sync')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildIcon(),
-              const SizedBox(height: 32),
-              Text(
-                _message,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 40),
-              if (_state == _State.idle || _state == _State.done || _state == _State.error)
-                FilledButton.icon(
-                  onPressed: _sync,
-                  icon: const Icon(Icons.sync),
-                  label: Text(_state == _State.done ? 'Sync again' : 'Sync now'),
-                ),
-            ],
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const SizedBox(height: 16),
+          Center(child: _buildIcon()),
+          const SizedBox(height: 24),
+          Center(
+            child: Text(
+              _msg,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
           ),
-        ),
+          if (_lastWx.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                '$_lastWx  ($_lastAt)',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey),
+              ),
+            ),
+          ],
+          const SizedBox(height: 32),
+          if (!busy)
+            Center(
+              child: FilledButton.icon(
+                onPressed: _sync,
+                icon: const Icon(Icons.sync),
+                label: Text(_state == _State.done ? 'Sync again' : 'Sync now'),
+              ),
+            ),
+          const SizedBox(height: 40),
+          const Divider(),
+          const SizedBox(height: 16),
+          Text('Settings', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _apiKeyCtrl,
+            decoration: const InputDecoration(
+              labelText: 'OpenWeatherMap API key (optional)',
+              helperText: 'Needed for severe weather alerts only.',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: _saveApiKey,
+          ),
+          const SizedBox(height: 16),
+          SwitchListTile(
+            title: const Text('Auto-sync every hour'),
+            subtitle: const Text('Clock must be awake at HH:00 UTC'),
+            value: _autoSync,
+            onChanged: busy ? null : _setAutoSync,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ],
       ),
     );
   }
@@ -192,7 +226,7 @@ class _SyncPageState extends State<SyncPage> {
   Widget _buildIcon() {
     switch (_state) {
       case _State.done:
-        return const Icon(Icons.check_circle, size: 120, color: Colors.green);
+        return const Icon(Icons.check_circle, size: 100, color: Colors.green);
       case _State.error:
         return const Icon(Icons.error_outline, size: 80, color: Colors.red);
       case _State.idle:
