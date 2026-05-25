@@ -4,6 +4,7 @@
 #include <esp_log.h>
 #include <sys/time.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define TAG "clock"
 
@@ -78,6 +79,9 @@ void clock_get_time_strings(char *time_str, char *date_str, struct tm *tm_out)
 {
     struct timeval tv;
     struct tm      tm;
+
+    setenv("TZ", CLOCK_TIMEZONE, 1);
+    tzset();
 
     gettimeofday(&tv, NULL);
     localtime_r(&tv.tv_sec, &tm);

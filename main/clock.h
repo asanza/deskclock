@@ -5,6 +5,10 @@
 #include <time.h>
 #include <driver/i2c_master.h>
 
+/* POSIX TZ string: CET (UTC+1) winter, CEST (UTC+2) summer.
+ * DST starts last Sunday of March at 02:00, ends last Sunday of October at 03:00. */
+#define CLOCK_TIMEZONE "CET-1CEST,M3.5.0,M10.5.0/3"
+
 /**
  * @brief Initialize the I2C bus and PCF8563 RTC
  * 
