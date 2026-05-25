@@ -135,19 +135,20 @@ class _SyncPageState extends State<SyncPage> {
 
     _setStatus(_State.scanning, 'Scanning for DeskClock…');
 
-    final result = weather != null
-        ? await syncToDevice(weather)
-        : 'No location available';
+    // Always sync time; weather is best-effort (null = time-only sync).
+    final result = await syncToDevice(weather);
 
     if (result == 'ok') {
-      final wxStr = weather!.toDisplayString();
-      final now   = DateTime.now();
-      final at    = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final now = DateTime.now();
+      final at  = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('last_wx_str', wxStr);
-      await prefs.setString('last_sync_at', at);
-      setState(() { _lastWx = wxStr; _lastAt = at; });
-      _setStatus(_State.done, 'Clock updated!');
+      if (weather != null) {
+        final wxStr = weather.toDisplayString();
+        await prefs.setString('last_wx_str', wxStr);
+        await prefs.setString('last_sync_at', at);
+        setState(() { _lastWx = wxStr; _lastAt = at; });
+      }
+      _setStatus(_State.done, weather != null ? 'Clock updated!' : 'Time synced (no weather — check location)');
     } else {
       _setStatus(_State.error, result);
     }

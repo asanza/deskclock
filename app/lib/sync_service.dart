@@ -50,14 +50,22 @@ String _conditionName(int c) {
 
 Future<Position?> getFreshPosition() async {
   try {
-    final perm = await Geolocator.checkPermission();
+    if (!await Geolocator.isLocationServiceEnabled()) return null;
+
+    LocationPermission perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied) {
+      perm = await Geolocator.requestPermission();
+    }
     if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return null;
-    return await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.low,
-        timeLimit: Duration(seconds: 10),
-      ),
-    );
+
+    // Last known position is instant; fall back to a fresh fix if unavailable.
+    return await Geolocator.getLastKnownPosition() ??
+        await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.low,
+            timeLimit: Duration(seconds: 20),
+          ),
+        );
   } catch (_) {
     return null;
   }
@@ -189,9 +197,9 @@ void _writeFixedStr(Uint8List buf, int offset, int maxLen, String s) {
   buf[offset + n] = 0;
 }
 
-/// Scan, connect, push weather + UTC time to the DeskClock.
+/// Scan, connect, push weather (optional) + UTC time to the DeskClock.
 /// Returns a human-readable result string; 'ok' means success.
-Future<String> syncToDevice(WeatherData weather) async {
+Future<String> syncToDevice(WeatherData? weather) async {
   BluetoothDevice? found;
 
   final sub = FlutterBluePlus.onScanResults.listen((results) {
@@ -230,7 +238,9 @@ Future<String> syncToDevice(WeatherData weather) async {
         .firstOrNull;
     if (wxChr == null || timeChr == null) return 'Characteristics not found';
 
-    await wxChr.write(packWeather(weather), withoutResponse: false);
+    if (weather != null) {
+      await wxChr.write(packWeather(weather), withoutResponse: false);
+    }
 
     final utcSecs  = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final timeBytes = Uint8List(4)
