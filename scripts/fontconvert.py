@@ -25,6 +25,7 @@ font_name = args.name
 # must not overlap and be in ascending order
 intervals = [
     (32, 126),
+    (0xB0, 0xB0),   # ° degree symbol
     # (160, 255),
     # (0x2500, 0x259F),
     # (0x2700, 0x27BF),
