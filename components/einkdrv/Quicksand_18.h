@@ -1,5 +1,3 @@
-total 21619
-compressed 11702
 #pragma once
 #include "epd_driver.h"
 const uint8_t Quicksand_18Bitmaps[11702] = {
