@@ -43,10 +43,10 @@ class SyncPage extends StatefulWidget {
 }
 
 class _SyncPageState extends State<SyncPage> {
-  _State _state  = _State.idle;
-  String _msg    = 'Press sync to update your clock.';
-  String _lastWx = '';
-  String _lastAt = '';
+  _State _state    = _State.idle;
+  String _msg      = 'Press sync to update your clock.';
+  String _lastWx   = '';
+  String _lastSync = '';   // formatted label, e.g. "Today 14:32"
   bool   _autoSync = false;
 
   final _apiKeyCtrl = TextEditingController();
@@ -78,11 +78,12 @@ class _SyncPageState extends State<SyncPage> {
   Future<void> _loadPrefs() async {
     final prefs  = await SharedPreferences.getInstance();
     final apiKey = await _secure.read(key: 'owm_api_key') ?? '';
+    final tsMs   = prefs.getInt('last_sync_ts');
     setState(() {
       _apiKeyCtrl.text = apiKey;
       _autoSync        = prefs.getBool('auto_sync') ?? false;
       _lastWx          = prefs.getString('last_wx_str') ?? '';
-      _lastAt          = prefs.getString('last_sync_at') ?? '';
+      _lastSync        = tsMs != null ? _formatSyncTime(tsMs) : '';
     });
   }
 
@@ -175,18 +176,17 @@ class _SyncPageState extends State<SyncPage> {
     final result = await syncToDevice(weather);
 
     if (result == 'ok') {
-      final now = DateTime.now();
-      final at  = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final now   = DateTime.now();
+      final tsMs  = now.millisecondsSinceEpoch;
       final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('last_sync_ts', tsMs);
       if (weather != null) {
         final wxStr = weather.toDisplayString();
         await prefs.setString('last_wx_str', wxStr);
-        await prefs.setString('last_sync_at', at);
-        setState(() { _lastWx = wxStr; _lastAt = at; });
-        _setStatus(_State.done, 'Clock updated!');
-      } else {
-        _setStatus(_State.done, locationError ?? 'No weather data');
+        setState(() { _lastWx = wxStr; });
       }
+      setState(() => _lastSync = _formatSyncTime(tsMs));
+      _setStatus(_State.done, weather != null ? 'Clock updated!' : locationError ?? 'No weather data');
     } else {
       _setStatus(_State.error, result);
     }
@@ -194,6 +194,19 @@ class _SyncPageState extends State<SyncPage> {
 
   void _setStatus(_State state, String msg) {
     if (mounted) setState(() { _state = state; _msg = msg; });
+  }
+
+  String _formatSyncTime(int tsMs) {
+    final t    = DateTime.fromMillisecondsSinceEpoch(tsMs);
+    final now  = DateTime.now();
+    final hhmm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    final isToday     = t.year == now.year && t.month == now.month && t.day == now.day;
+    final isYesterday = DateTime(t.year, t.month, t.day)
+        .isAtSameMomentAs(DateTime(now.year, now.month, now.day - 1));
+    if (isToday)     return 'Today $hhmm';
+    if (isYesterday) return 'Yesterday $hhmm';
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return '${days[t.weekday - 1]} $hhmm';
   }
 
   @override
@@ -216,11 +229,11 @@ class _SyncPageState extends State<SyncPage> {
               style: Theme.of(context).textTheme.bodyLarge,
             ),
           ),
-          if (_lastWx.isNotEmpty) ...[
+          if (_lastSync.isNotEmpty) ...[
             const SizedBox(height: 8),
             Center(
               child: Text(
-                '$_lastWx  ($_lastAt)',
+                _lastWx.isNotEmpty ? '$_lastWx  ·  $_lastSync' : 'Last sync: $_lastSync',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey),
               ),

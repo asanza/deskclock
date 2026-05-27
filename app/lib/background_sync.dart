@@ -22,5 +22,9 @@ Future<void> backgroundSyncCallback() async {
   final weather = await fetchWeather(lat, lon, owmKey.isNotEmpty ? owmKey : null);
   if (weather == null) return;
 
-  await syncToDevice(weather);
+  final result = await syncToDevice(weather);
+  if (result == 'ok') {
+    await prefs.setInt('last_sync_ts', DateTime.now().millisecondsSinceEpoch);
+    await prefs.setString('last_wx_str', weather.toDisplayString());
+  }
 }
