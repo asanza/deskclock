@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -49,6 +50,9 @@ class _SyncPageState extends State<SyncPage> {
   bool   _autoSync = false;
 
   final _apiKeyCtrl = TextEditingController();
+  static const _secure = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
 
   @override
   void initState() {
@@ -72,9 +76,10 @@ class _SyncPageState extends State<SyncPage> {
   }
 
   Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs  = await SharedPreferences.getInstance();
+    final apiKey = await _secure.read(key: 'owm_api_key') ?? '';
     setState(() {
-      _apiKeyCtrl.text = prefs.getString('owm_api_key') ?? '';
+      _apiKeyCtrl.text = apiKey;
       _autoSync        = prefs.getBool('auto_sync') ?? false;
       _lastWx          = prefs.getString('last_wx_str') ?? '';
       _lastAt          = prefs.getString('last_sync_at') ?? '';
@@ -82,17 +87,43 @@ class _SyncPageState extends State<SyncPage> {
   }
 
   Future<void> _saveApiKey(String key) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('owm_api_key', key);
+    await _secure.write(key: 'owm_api_key', value: key);
   }
 
   Future<void> _setAutoSync(bool enable) async {
+    if (enable) {
+      // Android 12+: SCHEDULE_EXACT_ALARM requires explicit user approval
+      // in Settings → Apps → Special app access → Alarms & reminders.
+      final exactAlarm = await Permission.scheduleExactAlarm.status;
+      if (!exactAlarm.isGranted) {
+        await Permission.scheduleExactAlarm.request();
+        // Re-check after the settings page closes.
+        if (!(await Permission.scheduleExactAlarm.isGranted)) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                'Grant "Alarms & reminders" in Settings → Apps → '
+                'Special app access, then try again.',
+              ),
+              duration: Duration(seconds: 6),
+            ));
+          }
+          return;
+        }
+      }
+
+      // Ask to be excluded from Doze / battery optimisation so the
+      // alarm fires even when the screen is off for a long time.
+      if (await Permission.ignoreBatteryOptimizations.isDenied) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    }
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('auto_sync', enable);
     setState(() => _autoSync = enable);
 
     if (enable) {
-      // Schedule first fire at the next UTC HH:00:10
       final now      = DateTime.now().toUtc();
       final nextHour = DateTime.utc(now.year, now.month, now.day, now.hour + 1, 0, 10);
       await AndroidAlarmManager.periodic(

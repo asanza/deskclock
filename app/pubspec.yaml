@@ -41,6 +41,7 @@ dependencies:
   http: ^1.2.0
   android_alarm_manager_plus: ^5.0.0
   shared_preferences: ^2.3.0
+  flutter_secure_storage: ^9.2.2
 
 dev_dependencies:
   flutter_test:
