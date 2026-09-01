@@ -1,19 +1,16 @@
 import 'dart:async';
 
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'background_sync.dart';
-import 'sync_service.dart';
-
-const _alarmId = 42;
+import 'foreground_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AndroidAlarmManager.initialize();
+  initForegroundTask();
   runApp(const DeskClockApp());
 }
 
@@ -22,18 +19,18 @@ class DeskClockApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'DeskClock',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
+    return WithForegroundTask(
+      child: MaterialApp(
+        title: 'DeskClock',
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+          useMaterial3: true,
+        ),
+        home: const SyncPage(),
       ),
-      home: const SyncPage(),
     );
   }
 }
-
-enum _State { idle, fetching, scanning, done, error }
 
 class SyncPage extends StatefulWidget {
   const SyncPage({super.key});
@@ -42,12 +39,13 @@ class SyncPage extends StatefulWidget {
   State<SyncPage> createState() => _SyncPageState();
 }
 
-class _SyncPageState extends State<SyncPage> {
-  _State _state    = _State.idle;
-  String _msg      = 'Press sync to update your clock.';
-  String _lastWx   = '';
-  String _lastSync = '';   // formatted label, e.g. "Today 14:32"
-  bool   _autoSync = false;
+class _SyncPageState extends State<SyncPage> with WidgetsBindingObserver {
+  bool   _serviceRunning = false;
+  bool   _connected      = false;
+  int?   _battery;
+  int?   _uptimeSecs;
+  String _lastWx         = '';
+  String _lastSync       = '';
 
   final _apiKeyCtrl = TextEditingController();
   static const _secure = FlutterSecureStorage(
@@ -57,14 +55,32 @@ class _SyncPageState extends State<SyncPage> {
   @override
   void initState() {
     super.initState();
-    _requestPermissions();
-    _loadPrefs();
+    WidgetsBinding.instance.addObserver(this);
+    FlutterForegroundTask.addTaskDataCallback(_onTaskData);
+    _init();
   }
 
   @override
   void dispose() {
+    FlutterForegroundTask.removeTaskDataCallback(_onTaskData);
+    WidgetsBinding.instance.removeObserver(this);
     _apiKeyCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Re-request current status from the task handler when foregrounded
+      FlutterForegroundTask.sendDataToTask('request_status');
+    }
+  }
+
+  Future<void> _init() async {
+    await _requestPermissions();
+    await _loadPrefs();
+    await startForegroundService();
+    setState(() => _serviceRunning = true);
   }
 
   Future<void> _requestPermissions() async {
@@ -73,6 +89,7 @@ class _SyncPageState extends State<SyncPage> {
       Permission.bluetoothConnect,
       Permission.location,
     ].request();
+    await FlutterForegroundTask.requestNotificationPermission();
   }
 
   Future<void> _loadPrefs() async {
@@ -81,119 +98,25 @@ class _SyncPageState extends State<SyncPage> {
     final tsMs   = prefs.getInt('last_sync_ts');
     setState(() {
       _apiKeyCtrl.text = apiKey;
-      _autoSync        = prefs.getBool('auto_sync') ?? false;
       _lastWx          = prefs.getString('last_wx_str') ?? '';
       _lastSync        = tsMs != null ? _formatSyncTime(tsMs) : '';
     });
   }
 
+  void _onTaskData(Object data) {
+    if (data is! Map) return;
+    final tsMs = data['lastSyncTs'] as int?;
+    setState(() {
+      _connected  = data['connected']  as bool?  ?? false;
+      _battery    = data['battery']    as int?;
+      _uptimeSecs = data['uptimeSecs'] as int?;
+      _lastWx     = data['lastWx']     as String? ?? _lastWx;
+      _lastSync   = tsMs != null ? _formatSyncTime(tsMs) : _lastSync;
+    });
+  }
+
   Future<void> _saveApiKey(String key) async {
     await _secure.write(key: 'owm_api_key', value: key);
-  }
-
-  Future<void> _setAutoSync(bool enable) async {
-    if (enable) {
-      // Android 12+: SCHEDULE_EXACT_ALARM requires explicit user approval
-      // in Settings → Apps → Special app access → Alarms & reminders.
-      final exactAlarm = await Permission.scheduleExactAlarm.status;
-      if (!exactAlarm.isGranted) {
-        await Permission.scheduleExactAlarm.request();
-        // Re-check after the settings page closes.
-        if (!(await Permission.scheduleExactAlarm.isGranted)) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text(
-                'Grant "Alarms & reminders" in Settings → Apps → '
-                'Special app access, then try again.',
-              ),
-              duration: Duration(seconds: 6),
-            ));
-          }
-          return;
-        }
-      }
-
-      // Ask to be excluded from Doze / battery optimisation so the
-      // alarm fires even when the screen is off for a long time.
-      if (await Permission.ignoreBatteryOptimizations.isDenied) {
-        await Permission.ignoreBatteryOptimizations.request();
-      }
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('auto_sync', enable);
-    setState(() => _autoSync = enable);
-
-    if (enable) {
-      final now      = DateTime.now().toUtc();
-      final nextHour = DateTime.utc(now.year, now.month, now.day, now.hour + 1, 0, 10);
-      await AndroidAlarmManager.periodic(
-        const Duration(hours: 1),
-        _alarmId,
-        backgroundSyncCallback,
-        startAt:            nextHour,
-        exact:              true,
-        wakeup:             true,
-        rescheduleOnReboot: true,
-      );
-    } else {
-      await AndroidAlarmManager.cancel(_alarmId);
-    }
-  }
-
-  Future<void> _sync() async {
-    _setStatus(_State.fetching, 'Getting location…');
-
-    // Get location — try fresh, fall back to cached
-    double? lat, lon;
-    String? locationError;
-
-    final (pos, locErr) = await getFreshPosition();
-    if (pos != null) {
-      lat = pos.latitude;
-      lon = pos.longitude;
-      await cachePosition(lat, lon);
-    } else {
-      locationError = locErr;
-      final cached = await loadCachedPosition();
-      if (cached != null) {
-        lat = cached['lat'];
-        lon = cached['lon'];
-        locationError = null; // cached coords are fine
-      }
-    }
-
-    WeatherData? weather;
-    if (lat != null && lon != null) {
-      _setStatus(_State.fetching, 'Fetching weather…');
-      final owmKey = _apiKeyCtrl.text.trim();
-      weather = await fetchWeather(lat, lon, owmKey.isNotEmpty ? owmKey : null);
-    }
-
-    _setStatus(_State.scanning, 'Scanning for DeskClock…');
-
-    // Always sync time; weather is best-effort.
-    final result = await syncToDevice(weather);
-
-    if (result == 'ok') {
-      final now   = DateTime.now();
-      final tsMs  = now.millisecondsSinceEpoch;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('last_sync_ts', tsMs);
-      if (weather != null) {
-        final wxStr = weather.toDisplayString();
-        await prefs.setString('last_wx_str', wxStr);
-        setState(() { _lastWx = wxStr; });
-      }
-      setState(() => _lastSync = _formatSyncTime(tsMs));
-      _setStatus(_State.done, weather != null ? 'Clock updated!' : locationError ?? 'No weather data');
-    } else {
-      _setStatus(_State.error, result);
-    }
-  }
-
-  void _setStatus(_State state, String msg) {
-    if (mounted) setState(() { _state = state; _msg = msg; });
   }
 
   String _formatSyncTime(int tsMs) {
@@ -209,49 +132,84 @@ class _SyncPageState extends State<SyncPage> {
     return '${days[t.weekday - 1]} $hhmm';
   }
 
+  String _formatUptime(int? secs) {
+    if (secs == null) return '';
+    final d = secs ~/ 86400;
+    final h = (secs % 86400) ~/ 3600;
+    final m = (secs % 3600)  ~/ 60;
+    if (d > 0) return '${d}d ${h}h';
+    if (h > 0) return '${h}h ${m}m';
+    return '${m}m';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final busy = _state != _State.idle &&
-                 _state != _State.done &&
-                 _state != _State.error;
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(title: const Text('DeskClock Sync')),
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
           const SizedBox(height: 16),
-          Center(child: _buildIcon()),
-          const SizedBox(height: 24),
+          Center(child: _buildStatusIcon()),
+          const SizedBox(height: 16),
           Center(
             child: Text(
-              _msg,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyLarge,
+              _connected ? 'Connected' : (_serviceRunning ? 'Searching…' : 'Starting…'),
+              style: theme.textTheme.titleMedium,
             ),
           ),
+
+          // Battery + uptime row
+          if (_connected) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (_battery != null) ...[
+                  const Icon(Icons.battery_full, size: 16, color: Colors.grey),
+                  const SizedBox(width: 4),
+                  Text('$_battery%',
+                      style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey)),
+                ],
+                if (_battery != null && _uptimeSecs != null)
+                  const Text('  ·  ',
+                      style: TextStyle(color: Colors.grey)),
+                if (_uptimeSecs != null)
+                  Text('Up ${_formatUptime(_uptimeSecs)}',
+                      style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey)),
+              ],
+            ),
+          ],
+
+          // Last sync + weather
           if (_lastSync.isNotEmpty) ...[
             const SizedBox(height: 8),
             Center(
               child: Text(
                 _lastWx.isNotEmpty ? '$_lastWx  ·  $_lastSync' : 'Last sync: $_lastSync',
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey),
+                style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
               ),
             ),
           ],
-          const SizedBox(height: 32),
-          if (!busy)
+
+          const SizedBox(height: 24),
+          if (_connected)
             Center(
-              child: FilledButton.icon(
-                onPressed: _sync,
-                icon: const Icon(Icons.sync),
-                label: Text(_state == _State.done ? 'Sync again' : 'Sync now'),
+              child: OutlinedButton.icon(
+                onPressed: () =>
+                    FlutterForegroundTask.sendDataToTask('sync_now'),
+                icon: const Icon(Icons.sync, size: 18),
+                label: const Text('Force sync'),
               ),
             ),
+
           const SizedBox(height: 40),
           const Divider(),
           const SizedBox(height: 16),
-          Text('Settings', style: Theme.of(context).textTheme.titleSmall),
+          Text('Settings', style: theme.textTheme.titleSmall),
           const SizedBox(height: 12),
           TextField(
             controller: _apiKeyCtrl,
@@ -262,33 +220,21 @@ class _SyncPageState extends State<SyncPage> {
             ),
             onChanged: _saveApiKey,
           ),
-          const SizedBox(height: 16),
-          SwitchListTile(
-            title: const Text('Auto-sync every hour'),
-            subtitle: const Text('Clock must be awake at HH:00 UTC'),
-            value: _autoSync,
-            onChanged: busy ? null : _setAutoSync,
-            contentPadding: EdgeInsets.zero,
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildIcon() {
-    switch (_state) {
-      case _State.done:
-        return const Icon(Icons.check_circle, size: 100, color: Colors.green);
-      case _State.error:
-        return const Icon(Icons.error_outline, size: 80, color: Colors.red);
-      case _State.idle:
-        return const Icon(Icons.watch, size: 80, color: Colors.indigo);
-      default:
-        return const SizedBox(
-          width: 80,
-          height: 80,
-          child: CircularProgressIndicator(strokeWidth: 6),
-        );
+  Widget _buildStatusIcon() {
+    if (_connected) {
+      return const Icon(Icons.watch, size: 80, color: Colors.green);
     }
+    if (_serviceRunning) {
+      return const SizedBox(
+        width: 80, height: 80,
+        child: CircularProgressIndicator(strokeWidth: 6),
+      );
+    }
+    return const Icon(Icons.watch, size: 80, color: Colors.grey);
   }
 }

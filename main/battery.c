@@ -70,3 +70,10 @@ bool battery_is_critical(float voltage)
 {
     return voltage <= BATTERY_CRITICAL_THRESHOLD;
 }
+
+uint8_t battery_get_percent(float voltage)
+{
+    if (voltage >= 4.2f) return 100;
+    if (voltage <= 3.2f) return 0;
+    return (uint8_t)((voltage - 3.2f) / (4.2f - 3.2f) * 100.0f + 0.5f);
+}

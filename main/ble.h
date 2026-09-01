@@ -2,22 +2,28 @@
 #define H_BLE_DESKCLOCK_
 
 #include <driver/i2c_master.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * Start BLE advertising and wait for a companion app to sync time + weather.
- * The app must write the weather characteristic first, then the time
- * characteristic (which triggers shutdown). Blocks until time is written,
- * the connection is lost, or timeout_ms elapses.
- *
- * @param rtc_dev     PCF8563 device handle used to persist the new time.
- * @param timeout_ms  Advertising timeout. Use 60000 for manual sync,
- *                    45000 for the automatic hourly sync.
+ * Initialise NimBLE and start advertising. Runs permanently as a background
+ * task — call once after NVS is initialised. The BLE stack is never stopped.
  */
-void start_ble(i2c_master_dev_handle_t rtc_dev, uint32_t timeout_ms);
+void ble_init(i2c_master_dev_handle_t rtc_dev);
+
+/** True while a phone is actively connected. */
+bool ble_is_connected(void);
+
+/**
+ * Update the BLE Battery Level characteristic (standard service 0x180F).
+ * Sends a NOTIFY to the connected client if one is subscribed.
+ * Safe to call from any FreeRTOS task.
+ */
+void ble_update_battery(uint8_t percent);
 
 #ifdef __cplusplus
 }

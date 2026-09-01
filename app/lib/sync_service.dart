@@ -10,10 +10,13 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Must match UUIDs in ble.c
-const kServiceUuid     = "12345678-1234-1234-1234-123456789001";
-const kWeatherCharUuid = "12345678-1234-1234-1234-123456789002";
-const kTimeCharUuid    = "12345678-1234-1234-1234-123456789003";
-const kDeviceName      = "DeskClock";
+const kServiceUuid          = "12345678-1234-1234-1234-123456789001";
+const kWeatherCharUuid      = "12345678-1234-1234-1234-123456789002";
+const kTimeCharUuid         = "12345678-1234-1234-1234-123456789003";
+const kUptimeCharUuid       = "12345678-1234-1234-1234-123456789005";
+const kBatteryServiceUuid   = "0000180f-0000-1000-8000-00805f9b34fb";
+const kBatteryLevelCharUuid = "00002a19-0000-1000-8000-00805f9b34fb";
+const kDeviceName           = "DeskClock";
 const _scanTimeout     = Duration(seconds: 30);
 
 class WeatherData {
@@ -38,9 +41,9 @@ class WeatherData {
   });
 
   String toDisplayString() {
-    if (alertLevel >= 3) return '! ${alertText.isNotEmpty ? alertText : "WEATHER ALERT"}';
+    if (alertLevel >= 3) return alertText.isNotEmpty ? '! $alertText' : '! WEATHER ALERT';
     final cond = _conditionName(condition);
-    final base = '$location ${temperature}°C $cond';
+    final base = '$location $temperature°C $cond';
     return rainProb >= 50 ? '$base $rainProb%' : base;
   }
 }
